@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -10,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from .db import get_engine, init_models
-from .models import Player
+from .models import BattleRequest, Player
 
 load_dotenv()
+log = logging.getLogger(__name__)
 
 
 def db_engine():
@@ -49,6 +51,27 @@ async def create_player(
         await db.refresh(clean)
         return clean
     except IntegrityError:
+        log.exception("Invalid player")
         raise RequestValidationError(["name"])
     except ValidationError as ex:
+        log.exception("Invalid player")
         raise RequestValidationError([ex.json()])
+
+
+@app.post("/battle/{initiator_id}/{opponent_id}")
+async def request_battle(
+    *, db: AsyncSession = Depends(db_session), initiator_id: int, opponent_id: int
+) -> BattleRequest:
+    try:
+        clean = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
+        db.add(clean)
+        await db.commit()
+        await db.refresh(clean)
+        return clean
+    except ValidationError as ex:
+        log.exception("Invalid battle request")
+        raise RequestValidationError([ex.json()])
+    except IntegrityError as ex:
+        # Player's not found
+        log.exception("Invalid battle request")
+        raise RequestValidationError([*ex.detail])
