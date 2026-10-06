@@ -1,0 +1,5 @@
+.zed
+*.py[codz]
+__pycache__/
+.venv/
+.pytest_cache/

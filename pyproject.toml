@@ -1,0 +1,36 @@
+[project]
+name = "battle-engine"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Dusan Maliarik", email = "dusan@struna.me" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "dotenv>=0.9.9",
+    "fastapi[standard]>=0.142.2",
+    "sqlmodel>=0.0.47",
+]
+
+[project.scripts]
+server = "battle_engine.app:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fastapi]
+entrypoint = "battle_engine.main:app"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
+extend-immutable-calls = ["Depends", "fastapi.Depends", "Query", "fastapi.Query"]
