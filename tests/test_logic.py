@@ -11,5 +11,24 @@ def test_process_battle_base():
         opponent_id=0,
         opponent=p2,
     )
-    winner = process_battle(req)[0]
+    winner, logs = process_battle(req)
+    print("\n")
+    for l in logs:
+        print(l)
+    assert winner == p2
+
+
+def test_process_battle_base_equals():
+    p1 = Player(name="Joe", defense=70, attack=80)
+    p2 = Player(name="Jane", defense=70, attack=90)
+    req = BattleRequest(
+        initiator_id=0,
+        initiator=p1,
+        opponent_id=0,
+        opponent=p2,
+    )
+    winner, logs = process_battle(req)
+    print("\n")
+    for l in logs:
+        print(l)
     assert winner == p1

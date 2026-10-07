@@ -1,24 +1,9 @@
-import random
-from collections.abc import AsyncGenerator
-
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from battle_engine.models import BattleRequest, Player
-
-
-async def make_player(db: AsyncSession) -> AsyncGenerator[Player]:
-    cnt = 0
-    while True:
-        n = random.choice(["Jane", "Joe", "Joseph"])
-        p = Player(name=f"{n}{cnt}")
-        async with db.begin():
-            db.add(p)
-        await db.refresh(p)
-        await db.commit()
-        yield p
-        cnt += 1
+from tests.util import make_battle, make_player
 
 
 @pytest.mark.asyncio
@@ -35,7 +20,29 @@ async def test_player_name_unique(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_battle_request_integrity(db: AsyncSession):
-    req = BattleRequest(initiator_id=12, opponent_id=999)
+    players = make_player(db)
+    p1 = await anext(players)
+    assert p1.id is not None
+    req = BattleRequest(initiator_id=p1.id, opponent_id=999)
     with pytest.raises(IntegrityError):
         async with db.begin():
             db.add(req)
+
+
+@pytest.mark.asyncio
+async def test_battle_request_pop_and_release(db: AsyncSession):
+    players = make_player(db)
+    req_in = await make_battle(db, players)
+    assert req_in.id is not None
+
+    req_out = await BattleRequest.pop(db)
+    assert req_out is not None
+    assert req_out.id == req_in.id
+
+    p1 = await Player.get(db, req_out.initiator_id)
+    p2 = await Player.get(db, req_out.opponent_id)
+    assert p1 is not None and p2 is not None
+    assert p1.battle_lock == True and p2.battle_lock == True
+
+    req_out = await BattleRequest.pop(db)
+    assert req_out is None

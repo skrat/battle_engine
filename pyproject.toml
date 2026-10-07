@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
+    "asyncpg>=0.32.0",
     "dotenv>=0.9.9",
     "fastapi[standard]>=0.142.2",
     "sqlmodel>=0.0.47",
@@ -16,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 server = "battle_engine.app:main"
+worker = "battle_engine.worker:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
@@ -34,3 +36,12 @@ dev = [
 [tool.ruff.lint.flake8-bugbear]
 # Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
 extend-immutable-calls = ["Depends", "fastapi.Depends", "Query", "fastapi.Query"]
+
+[tool.pytest.ini_options]
+addopts = ["-s"]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"

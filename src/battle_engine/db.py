@@ -8,7 +8,7 @@ def get_engine(db_url: str, echo=False, **kwargs) -> AsyncEngine:
 
 
 async def get_session(engine: AsyncEngine):
-    async with AsyncSession(engine) as session:
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
 
 
@@ -16,7 +16,9 @@ async def init_models(engine: AsyncEngine):
     async with engine.begin() as conn:
         if engine.url.drivername.startswith("sqlite"):
             await conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.commit()
 
 
 async def drop_models(engine: AsyncEngine):

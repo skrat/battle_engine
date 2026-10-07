@@ -33,11 +33,11 @@ def test_create_player_fails_schema(client: TestClient):
 def make_player(client: TestClient) -> Generator[int]:
     cnt = 0
     while True:
+        cnt += 1
         n = random.choice(["Jane", "Joe", "Joseph"])
         resp = client.post("/player", json={"name": f"{n}{cnt}"})
         assert resp.status_code == 200
         yield resp.json()["id"]
-        cnt += 1
 
 
 def test_create_battle(client: TestClient):
