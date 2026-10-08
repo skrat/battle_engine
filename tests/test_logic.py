@@ -1,34 +1,49 @@
 from battle_engine.logic import process_battle
-from battle_engine.models import BattleRequest, Player
+from battle_engine.models import BattleRequestReady, Player
 
 
 def test_process_battle_base():
     p1 = Player(name="Joe", defense=30, attack=70)
     p2 = Player(name="Jane", defense=50, attack=90)
-    req = BattleRequest(
+    req = BattleRequestReady(
         initiator_id=0,
         initiator=p1,
         opponent_id=0,
         opponent=p2,
     )
-    winner, logs = process_battle(req)
+    result = process_battle(req)
     print("\n")
-    for l in logs:
+    for l in result.report:
         print(l)
-    assert winner == p2
+    assert result.winner == p2
 
 
 def test_process_battle_base_equals():
     p1 = Player(name="Joe", defense=70, attack=80)
     p2 = Player(name="Jane", defense=70, attack=90)
-    req = BattleRequest(
+    req = BattleRequestReady(
         initiator_id=0,
         initiator=p1,
         opponent_id=0,
         opponent=p2,
     )
-    winner, logs = process_battle(req)
+    result = process_battle(req)
     print("\n")
-    for l in logs:
+    for l in result.report:
         print(l)
-    assert winner == p1
+    assert result.winner == p1
+
+
+def test_resources_stolen():
+    p1 = Player(name="Joe", defense=70, attack=80, gold=100, silver=100)
+    p2 = Player(name="Jane", defense=70, attack=90, gold=100, silver=100)
+    req = BattleRequestReady(
+        initiator_id=0,
+        initiator=p1,
+        opponent_id=0,
+        opponent=p2,
+    )
+    result = process_battle(req)
+
+    assert result.winner is p1
+    assert p2.silver < p1.silver

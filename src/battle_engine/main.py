@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from .db import init_models
 from .logic import resolve_battle
-from .models import BattleRequest, Player
+from .models import BattleRequest, LeaderboardEntry, Player
 
 load_dotenv()
 
@@ -71,17 +71,31 @@ async def request_battle(*, db: SessionDep, initiator_id: int, opponent_id: int)
     - Handle battles in the order they are submitted.
     """
     try:
+        if not (
+            await Player.exists(db, initiator_id)
+            and await Player.exists(db, opponent_id)
+        ):
+            raise HTTPException(404)
         req = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
-        db.add(req)
-        await db.commit()
-        await db.refresh(req)
         result = await resolve_battle(db, req)
+        await LeaderboardEntry.update(db, result.winner.id, sum(result.stolen))
         return {
             "winner": result.winner.name,
             "report": result.report,
         }
     except ValidationError as ex:
         raise RequestValidationError([ex.json()])
-    except IntegrityError as ex:
-        # Player's not found
-        raise RequestValidationError([*ex.detail])
+
+
+@app.get("/leaderboard")
+async def leaderboard(*, db: SessionDep):
+    """Retrieve sorted leaderboard."""
+    board = await LeaderboardEntry.ranked(db)
+    return [
+        {
+            "rank": i + 1,
+            "player": {"id": ent.player_id, "name": ent.player.name},
+            "score": ent.score,
+        }
+        for i, ent in enumerate(board)
+    ]
