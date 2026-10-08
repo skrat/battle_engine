@@ -137,3 +137,11 @@ def test_leaderboard(client: TestClient):
 
     assert len(data) == 2
     assert data[0]["score"] > data[1]["score"]
+
+
+def test_security(client: TestClient):
+    h = client.headers
+    client.headers = {}
+    resp = client.post("/player", json={"name": "joe"})
+    assert resp.status_code == 401
+    client.headers = h

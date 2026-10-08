@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio.engine import AsyncEngine
 from sqlmodel import StaticPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from battle_engine.db import drop_models, init_models
-from battle_engine.main import app, db_session
+from battle_engine.db import db_session, drop_models, init_models
+from battle_engine.main import app
+from battle_engine.settings import settings
 
 TEST_DB_URL = "sqlite+aiosqlite:///test.sqlite3"
 
@@ -25,36 +26,39 @@ async def db_engine():
     await engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
 async def db_sessionmaker(db_engine: AsyncEngine):
     await init_models(db_engine)
     yield async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
     await drop_models(db_engine)
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
 async def db(db_engine: AsyncEngine, db_sessionmaker: async_sessionmaker[AsyncSession]):
     async with db_sessionmaker() as session:
         yield session
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def client(db: AsyncSession):
     def db_session_override():
         yield db
 
     app.dependency_overrides[db_session] = db_session_override
-    yield TestClient(app)
+    yield TestClient(app, headers={settings.API_KEY_HEADER: settings.API_KEY_SECRET})
     app.dependency_overrides.clear()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 async def aclient(db_sessionmaker: async_sessionmaker[AsyncSession]):
     async def db_session_override():
         async with db_sessionmaker() as session:
             yield session
 
     app.dependency_overrides[db_session] = db_session_override
-    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app)) as client:
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app),
+        headers={settings.API_KEY_HEADER: settings.API_KEY_SECRET},
+    ) as client:
         yield client
     app.dependency_overrides.clear()

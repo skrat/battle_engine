@@ -1,37 +1,21 @@
-import os
 from contextlib import asynccontextmanager
-from typing import Annotated
 
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from .db import init_models
+from .db import SessionDep, engine, init_models
 from .logic import resolve_battle
-from .models import BattleRequest, LeaderboardEntry, Player
-
-load_dotenv()
-
-
-DB_URL = os.getenv("DB_URL")
-if DB_URL is None:
-    raise RuntimeError("Missing DB_URL")
-
-
-engine = create_async_engine(DB_URL, echo=True)
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def db_session():
-    async with async_session() as session:
-        yield session
-
-
-SessionDep = Annotated[AsyncSession, Depends(db_session)]
+from .models import (
+    BattleRequest,
+    LeaderboardEntry,
+    LeaderboardEntryPublic,
+    LeaderboardPlayer,
+    Player,
+    PlayerCreate,
+)
+from .security import Protected
 
 
 @asynccontextmanager
@@ -40,16 +24,22 @@ async def app_lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=app_lifespan)
-
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+app = FastAPI(
+    title="Battle Engine",
+    version="1.0",
+    swagger_ui_parameters={
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+        "filter": True,
+    },
+    lifespan=app_lifespan,
+)
 
 
 @app.post("/player", response_model=Player)
-async def create_player(*, db: SessionDep, player: Player) -> Player:
+async def create_player(
+    *, _: Protected, db: SessionDep, player: PlayerCreate
+) -> Player:
     """Create player endpoint."""
     try:
         clean = Player.model_validate(player)
@@ -64,7 +54,9 @@ async def create_player(*, db: SessionDep, player: Player) -> Player:
 
 
 @app.post("/battle/{initiator_id}/{opponent_id}")
-async def request_battle(*, db: SessionDep, initiator_id: int, opponent_id: int):
+async def request_battle(
+    *, _: Protected, db: SessionDep, initiator_id: int, opponent_id: int
+):
     """Submit battle endpoint. Battles are processed inside the request handler to
     facilitate immediate processing. This also satisfies spec. conditions:
     - Handle battles in the order they are submitted.
@@ -88,14 +80,24 @@ async def request_battle(*, db: SessionDep, initiator_id: int, opponent_id: int)
 
 
 @app.get("/leaderboard")
-async def leaderboard(*, db: SessionDep):
+async def leaderboard(*, _: Protected, db: SessionDep) -> list[LeaderboardEntryPublic]:
     """Retrieve sorted leaderboard."""
     board = await LeaderboardEntry.ranked(db)
     return [
-        {
-            "rank": i + 1,
-            "player": {"id": ent.player_id, "name": ent.player.name},
-            "score": ent.score,
-        }
+        LeaderboardEntryPublic(
+            rank=i + 1,
+            score=ent.score,
+            player=LeaderboardPlayer(
+                id=ent.player_id,
+                name=ent.player.name,
+            ),
+        )
         for i, ent in enumerate(board)
     ]
+
+
+def start():
+    """Launched with `uv run server` at root level"""
+    import uvicorn
+
+    uvicorn.run("battle_engine.main:app", host="0.0.0.0", port=8000, reload=True)

@@ -9,13 +9,13 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
-    "dotenv>=0.9.9",
     "fastapi[standard]>=0.142.2",
+    "pydantic-settings>=2.15.0",
     "sqlmodel>=0.0.47",
 ]
 
 [project.scripts]
-server = "battle_engine.app:main"
+server = "battle_engine.main:start"
 worker = "battle_engine.worker:main"
 
 [build-system]

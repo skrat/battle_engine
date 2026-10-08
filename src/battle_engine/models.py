@@ -15,8 +15,7 @@ from sqlmodel import (
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
-class Player(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
+class PlayerCreate(BaseModel):
     name: Annotated[str, StringConstraints(max_length=20)] = Field(index=True)
     description: Annotated[str, StringConstraints(max_length=1000)] = ""
     gold: Annotated[int, Ge(0), Le(1_000_000_000)] = 100
@@ -24,6 +23,10 @@ class Player(SQLModel, table=True):
     attack: Annotated[int, Ge(0)] = 70
     defense: Annotated[int, Ge(0)] = 70
     hit_points: Annotated[int, Ge(0)] = 100
+
+
+class Player(PlayerCreate, SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
 
     # Trade off: lock user for battle using DB
     battle_lock: bool = False
@@ -78,3 +81,14 @@ class LeaderboardEntry(SQLModel, table=True):
             set_={"score": LeaderboardEntry.score + score}
         )
         await db.exec(ups_stmt)
+
+
+class LeaderboardPlayer(BaseModel):
+    id: int
+    name: str
+
+
+class LeaderboardEntryPublic(BaseModel):
+    rank: int
+    score: int
+    player: LeaderboardPlayer

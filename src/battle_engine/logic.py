@@ -5,7 +5,7 @@ import random
 from sqlmodel import select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from battle_engine.models import BattleRequest, BattleRequestReady, BattleResult, Player
+from .models import BattleRequest, BattleRequestReady, BattleResult, Player
 
 
 def pstat(p: Player):
