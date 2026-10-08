@@ -1,7 +1,13 @@
+import asyncio
 import random
-from collections.abc import Generator
 
+import httpx2
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from battle_engine.models import Player
 
 # === Player tests
 
@@ -30,29 +36,75 @@ def test_create_player_fails_schema(client: TestClient):
 # === Battle tests
 
 
-def make_player(client: TestClient) -> Generator[int]:
+def cnt():
     cnt = 0
     while True:
         cnt += 1
-        n = random.choice(["Jane", "Joe", "Joseph"])
-        resp = client.post("/player", json={"name": f"{n}{cnt}"})
-        assert resp.status_code == 200
-        yield resp.json()["id"]
+        yield cnt
+
+
+def make_player(client: TestClient, i: int, data: dict):
+    n = random.choice(["Jane", "Joe", "Joseph"])
+    resp = client.post("/player", json={"name": f"{n}{i}", **data})
+    assert resp.status_code == 200
+    return resp.json()
 
 
 def test_create_battle(client: TestClient):
-    players = make_player(client)
-    p1 = next(players)
-    p2 = next(players)
-    resp = client.post(f"/battle/{p1}/{p2}")
+    counter = cnt()
+    p1 = make_player(client, next(counter), {})
+    p2 = make_player(client, next(counter), {"defense": 20})
+    resp = client.post(f"/battle/{p1['id']}/{p2['id']}")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["initiator_id"] == p1
-    assert data["opponent_id"] == p2
+    assert data["winner"] == p1["name"]
 
 
 def test_create_battle_fails_nonexist_player(client: TestClient):
-    players = make_player(client)
-    p1 = next(players)
-    resp = client.post(f"/battle/{p1}/999")
+    resp = client.post("/battle/12/999")
     assert resp.status_code == 422
+
+
+def test_victory(client: TestClient):
+    counter = cnt()
+    p1 = make_player(client, next(counter), {"attack": 70, "defense": 50})
+    p2 = make_player(client, next(counter), {"attack": 50, "defense": 30})
+    resp = client.post(f"/battle/{p1['id']}/{p2['id']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["winner"] == p1["name"]
+
+    p1 = make_player(client, next(counter), {"attack": 20, "defense": 20})
+    p2 = make_player(client, next(counter), {"attack": 50, "defense": 30})
+    resp = client.post(f"/battle/{p1['id']}/{p2['id']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["winner"] == p2["name"]
+
+
+async def test_concurrent(
+    aclient: httpx2.AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+):
+    async def mkplayer(p: Player):
+        return Player(**(await aclient.post("/player", json=p.model_dump())).json())
+
+    p100 = await mkplayer(Player(name="p100", attack=100, defense=100))
+    p1 = await mkplayer(Player(name="p1", attack=50, defense=60))
+    p2 = await mkplayer(Player(name="p12", attack=70, defense=80))
+    battles = [
+        # initiator, opponent, expected winner
+        (p1, p2, p2),
+        (p1, p100, p100),
+        (p2, p100, p100),
+    ]
+    # Submit battles concurrently
+    bresp = await asyncio.gather(
+        *[aclient.post(f"/battle/{p1.id}/{p2.id}") for p1, p2, _ in battles]
+    )
+    for i in range(len(battles)):
+        assert bresp[i].json()["winner"] == battles[i][2].name
+
+    # All players should be unlocked
+    async with db_sessionmaker() as db:
+        for p in (await db.exec(select(Player))).all():
+            assert p.battle_lock == False

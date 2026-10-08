@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from sqlmodel import insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from battle_engine.models import BattleRequest, BattleStatus, Player
+from battle_engine.models import Player
 
 
 async def cancel(t: Task):
@@ -41,23 +41,3 @@ async def make_player(db: AsyncSession) -> AsyncGenerator[Player]:
         rslt = await db.exec(stmt)
         await db.commit()
         yield rslt.scalar_one()
-
-
-async def make_battle(
-    db: AsyncSession,
-    pgen: AsyncGenerator[Player],
-    p1: Player | None = None,
-    p2: Player | None = None,
-):
-    if p1 is None:
-        p1 = await anext(pgen)
-    if p2 is None:
-        p2 = await anext(pgen)
-    assert p1.id is not None
-    assert p2.id is not None
-    assert p1.id != p2.id
-    req = BattleRequest(status=BattleStatus.NEW, initiator_id=p1.id, opponent_id=p2.id)
-    db.add(req)
-    await db.commit()
-    await db.refresh(req)
-    return req

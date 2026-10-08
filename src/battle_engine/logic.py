@@ -1,4 +1,9 @@
-from battle_engine.models import BattleRequest, Player
+import asyncio
+
+from sqlmodel import select, update
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from battle_engine.models import BattleRequest, BattleResult, Player
 
 
 def pstat(p: Player):
@@ -23,6 +28,7 @@ def process_battle(req: BattleRequest, max_steps=10):
         if steps >= max_steps:
             # It's a tie when players' defense is too high
             # undefined behavior
+            report.append(" ! max steps reached")
             break
         steps += 1
         report.append(f" - {pstat(p1)} is attacking {pstat(p2)}")
@@ -50,3 +56,47 @@ def process_battle(req: BattleRequest, max_steps=10):
     winner = p1 if p2.hit_points == 0 else p2
     report.append(f" ~ {winner.name} is victorious!")
     return winner, report
+
+
+async def get_free_player(db: AsyncSession, id: int):
+    return (
+        await db.exec(
+            select(Player).where(Player.id == id).where(Player.battle_lock == False)
+        )
+    ).one_or_none()
+
+
+async def resolve_battle(db: AsyncSession, req: BattleRequest, poll_interval=1 / 30):
+    """Wait for battle players to become available (until all battles they are in are
+    finished), then processes the battle and returns the outcome."""
+    p1: Player | None = None
+    p2: Player | None = None
+    await db.commit()
+    while p1 is None or p2 is None:
+        # Poll the DB for players
+        async with db.begin():
+            # For each attempt, start a transaction
+            p1 = await get_free_player(db, req.initiator_id)
+            p2 = await get_free_player(db, req.opponent_id)
+            if p1 and p2:
+                # Once both players are available for battle, lock them, so no
+                # other battle involving these two players can be processes
+                await db.exec(
+                    update(Player)
+                    .where(Player.id.in_([req.initiator_id, req.opponent_id]))  # pyright: ignore
+                    .values(battle_lock=True)
+                )
+                await db.commit()
+                break
+        await asyncio.sleep(poll_interval)
+    req.initiator = p1
+    req.opponent = p2
+    winner, report = process_battle(req)
+    p1.battle_lock = False
+    p2.battle_lock = False
+    await db.commit()
+    # Release the player locks, so they become available for further battles
+    async with db.begin():
+        db.add(p1)
+        db.add(p2)
+    return BattleResult(battle=req, winner=winner, report=report)
