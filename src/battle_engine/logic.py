@@ -1,6 +1,9 @@
 import asyncio
+import logging
 import math
 import random
+from collections.abc import Coroutine
+from typing import Any
 
 from sqlmodel import update
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -12,6 +15,8 @@ from .models import (
     BattleResultStats,
     Player,
 )
+
+log = logging.getLogger(__name__)
 
 
 def pstat(p: Player):
@@ -95,7 +100,10 @@ def process_battle(req: BattleRequestReady, max_turns=20):
 
 
 async def resolve_battle(
-    db: AsyncSession, req: BattleRequest, poll_interval=1 / 30
+    db: AsyncSession,
+    req: BattleRequest,
+    poll_interval=0.01,
+    wait_for: Coroutine[None, None, Any] | None = None,
 ) -> BattleResultStats:
     """Wait for battle players to become available (until all battles they are in are
     finished), then processes the battle and returns the outcome."""
@@ -130,6 +138,8 @@ async def resolve_battle(
         await asyncio.sleep(poll_interval)
 
     assert p1 is not None and p2 is not None
+    log.debug(f"Players {p1.id}, {p2.id} locked")
+
     req_ready = BattleRequestReady(
         initiator=p1,
         opponent=p2,
@@ -137,16 +147,18 @@ async def resolve_battle(
     )
     result = process_battle(req_ready)
 
-    p1.battle_lock = False
-    p2.battle_lock = False
-    await db.commit()
+    if wait_for is not None:
+        await wait_for
+
     # Release the players' locks, so they'll become available for future battles
+    await db.commit()
     async with db.begin():
         await db.exec(
             update(Player)
             .where(Player.id.in_([p1_id, p2_id]))  # pyright: ignore
             .values(battle_lock=False)
         )
+    log.debug(f"Players {p1.id}, {p2.id} released")
     return BattleResultStats(
         num_lock_attempts=lock_attempts,
         **result.model_dump(),
