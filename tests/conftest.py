@@ -2,34 +2,27 @@ import httpx2
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
-from sqlmodel import StaticPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from battle_engine.db import db_session, drop_models, init_models
-from battle_engine.main import app
 from battle_engine.settings import settings
 
-TEST_DB_URL = "sqlite+aiosqlite:///test.sqlite3"
+settings.DB_URL = "sqlite+aiosqlite:///test.sqlite3"
+
+from battle_engine.db import async_session, db_session, drop_models, engine, init_models
+from battle_engine.main import app
 
 
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
-    engine = create_async_engine(
-        TEST_DB_URL,
-        # echo=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
     yield engine
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def db_sessionmaker(db_engine: AsyncEngine):
     await init_models(db_engine)
-    yield async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    yield async_session
     await drop_models(db_engine)
 
 

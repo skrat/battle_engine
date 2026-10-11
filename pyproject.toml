@@ -9,14 +9,16 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
+    "asyncpg>=0.32.0",
     "fastapi[standard]>=0.142.2",
     "pydantic-settings>=2.15.0",
     "sqlmodel>=0.0.47",
+    "taskiq>=0.13.0",
+    "taskiq-redis>=1.2.4",
 ]
 
 [project.scripts]
 server = "battle_engine.main:start"
-worker = "battle_engine.worker:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
@@ -28,6 +30,7 @@ entrypoint = "battle_engine.main:app"
 [dependency-groups]
 dev = [
     "httpx2>=2.13.1",
+    "locust>=2.46.7",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]

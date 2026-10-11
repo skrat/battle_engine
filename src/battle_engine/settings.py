@@ -11,8 +11,12 @@ class Settings(BaseSettings):
     )
 
     DB_URL: str
+    REDIS_URL: str
     API_KEY_HEADER: str
     API_KEY_SECRET: str
+    WITH_REDIS: bool = False
+    STAT_HEADER: str = "X-Battle-Lock-Stat"
+    STAT_HEADER_FLAG: bool = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -22,8 +26,10 @@ class Settings(BaseSettings):
             if (
                 isinstance(value, str)
                 and len(value) >= 2
-                and (value.startswith('"') and value.endswith('"'))
-                or (value.startswith("'") and value.endswith("'"))
+                and (
+                    (value.startswith('"') and value.endswith('"'))
+                    or (value.startswith("'") and value.endswith("'"))
+                )
             ):
                 setattr(self, field_name, value[1:-1])
 
