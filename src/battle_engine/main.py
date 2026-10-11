@@ -62,10 +62,10 @@ async def create_player(
         raise RequestValidationError(ex.errors())
 
 
-@app.post("/battle/{initiator_id}/{opponent_id}")
+@app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
 async def request_battle(
     *, _: Protected, db: SessionDep, initiator_id: int, opponent_id: int
-) -> BattleResult:
+):
     """Submit battle endpoint. Battles are processed inside the request handler to
     ensure immediate processing. This also satisfies spec. conditions:
     - Handle battles in the order they are submitted.
@@ -81,13 +81,14 @@ async def request_battle(
             opponent_id=opponent_id,
         )
         result = await resolve_battle(db, req)
+        assert result.winner.id is not None
         await LeaderboardEntry.update(
             db,
             result.winner.id,
             sum(result.stolen),
         )
         return JSONResponse(
-            result.model_dump(exclude=["num_lock_attempts"]),
+            result.model_dump(exclude={"num_lock_attempts": True}),
             headers=settings.STAT_HEADER_FLAG
             and {
                 settings.STAT_HEADER: str(result.num_lock_attempts),
@@ -115,13 +116,14 @@ async def request_battle_defer(
         )
         task_result = await task.wait_result(timeout=1)
         result = BattleResultStats(**task_result.return_value)
+        assert result.winner.id
         await LeaderboardEntry.update(
             db,
             result.winner.id,
             sum(result.stolen),
         )
         return JSONResponse(
-            result.model_dump(exclude=["num_lock_attempts"]),
+            result.model_dump(exclude={"num_lock_attempts": True}),
             headers=settings.STAT_HEADER_FLAG
             and {
                 settings.STAT_HEADER: str(result.num_lock_attempts),
