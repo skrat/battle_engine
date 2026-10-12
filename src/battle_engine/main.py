@@ -1,18 +1,21 @@
+import asyncio
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
+from redis.asyncio import Redis
 
-from .db import SessionDep, engine, init_models
+from battle_engine.db import make_blocking_pool
+
 from .logic import resolve_battle
 from .models import (
     BattleRequest,
     BattleResult,
     BattleResultStats,
-    LeaderboardEntry,
+    Leaderboard,
     LeaderboardEntryPublic,
     LeaderboardPlayer,
     Player,
@@ -25,13 +28,22 @@ from .tasks import broker, process_battle_task
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    await init_models(engine)
-    if settings.WITH_REDIS and not broker.is_worker_process:
+    app.state.redis = make_blocking_pool()
+    if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.startup()
     yield
-    if settings.WITH_REDIS and not broker.is_worker_process:
+    if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.shutdown()
+    await app.state.redis.disconnect()
 
+
+async def get_redis(request: Request):
+    async with Redis(connection_pool=request.app.state.redis) as r:
+        Player.Meta.database = r
+        yield r
+
+
+RedisDep = Annotated[Redis, Depends(get_redis)]
 
 app = FastAPI(
     title="Battle Engine",
@@ -46,17 +58,13 @@ app = FastAPI(
 
 
 @app.post("/player", response_model=Player)
-async def create_player(
-    *, _: Protected, db: SessionDep, player: PlayerCreate
-) -> Player:
+async def create_player(*, _: Protected, r: RedisDep, player: PlayerCreate) -> Player:
     """Create player endpoint."""
     try:
         clean = Player.model_validate(player)
-        db.add(clean)
-        await db.commit()
-        await db.refresh(clean)
+        await clean.create(r)
         return clean
-    except IntegrityError:
+    except Player.NameExists:
         raise RequestValidationError(["name"])
     except ValidationError as ex:
         raise RequestValidationError(ex.errors())
@@ -64,27 +72,30 @@ async def create_player(
 
 @app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
 async def request_battle(
-    *, _: Protected, db: SessionDep, initiator_id: int, opponent_id: int
+    *, _: Protected, r: RedisDep, initiator_id: str, opponent_id: str
 ):
     """Submit battle endpoint. Battles are processed inside the request handler to
     ensure immediate processing. This also satisfies spec. conditions:
     - Handle battles in the order they are submitted.
     """
     try:
-        if not (
-            await Player.exists(db, initiator_id)
-            and await Player.exists(db, opponent_id)
-        ):
-            raise HTTPException(404)
+        ex = await asyncio.gather(
+            Player.exists(r, initiator_id),
+            Player.exists(r, opponent_id),
+        )
+        if not ex[0]:
+            raise HTTPException(404, [f"{initiator_id} not found"])
+        if not ex[1]:
+            raise HTTPException(404, [f"{opponent_id} not found"])
         req = BattleRequest(
             initiator_id=initiator_id,
             opponent_id=opponent_id,
         )
-        result = await resolve_battle(db, req)
-        assert result.winner.id is not None
-        await LeaderboardEntry.update(
-            db,
-            result.winner.id,
+        result = await resolve_battle(r, req)
+        assert result.winner.pk is not None
+        await Leaderboard.update(
+            r,
+            result.winner.pk,
             sum(result.stolen),
         )
         return JSONResponse(
@@ -101,25 +112,24 @@ async def request_battle(
 
 @app.post("/battle_defer/{initiator_id}/{opponent_id}")
 async def request_battle_defer(
-    *, _: Protected, db: SessionDep, initiator_id: int, opponent_id: int
+    *, _: Protected, r: RedisDep, initiator_id: str, opponent_id: str
 ):
     """Same as /battle but uses taskiq and a Redis broker."""
     try:
         if not (
-            await Player.exists(db, initiator_id)
-            and await Player.exists(db, opponent_id)
+            await Player.exists(r, initiator_id) and await Player.exists(r, opponent_id)
         ):
             raise HTTPException(404)
-        task = await process_battle_task.kiq(
+        task = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
             initiator_id,
             opponent_id,
         )
         task_result = await task.wait_result(timeout=1)
         result = BattleResultStats(**task_result.return_value)
-        assert result.winner.id
-        await LeaderboardEntry.update(
-            db,
-            result.winner.id,
+        assert result.winner.pk
+        await Leaderboard.update(
+            r,
+            result.winner.pk,
             sum(result.stolen),
         )
         return JSONResponse(
@@ -135,15 +145,15 @@ async def request_battle_defer(
 
 
 @app.get("/leaderboard")
-async def leaderboard(*, _: Protected, db: SessionDep) -> list[LeaderboardEntryPublic]:
+async def leaderboard(*, _: Protected, r: RedisDep) -> list[LeaderboardEntryPublic]:
     """Retrieve sorted leaderboard."""
-    board = await LeaderboardEntry.ranked(db)
+    board = await Leaderboard.ranked(r)
     return [
         LeaderboardEntryPublic(
             rank=i + 1,
             score=ent.score,
             player=LeaderboardPlayer(
-                id=ent.player_id,
+                id=ent.player.id,
                 name=ent.player.name,
             ),
         )

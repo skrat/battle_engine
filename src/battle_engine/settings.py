@@ -10,11 +10,11 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
-    DB_URL: str
     REDIS_URL: str
+    REDIS_MAX_CONNECTIONS: int = 100
     API_KEY_HEADER: str
     API_KEY_SECRET: str
-    WITH_REDIS: bool = False
+    WITH_TASKIQ: bool = False
     STAT_HEADER: str = "X-Battle-Lock-Stat"
     STAT_HEADER_FLAG: bool = True
 

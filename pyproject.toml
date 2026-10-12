@@ -8,11 +8,10 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "aiosqlite>=0.22.1",
-    "asyncpg>=0.32.0",
     "fastapi[standard]>=0.142.2",
     "pydantic-settings>=2.15.0",
-    "sqlmodel>=0.0.47",
+    "redis-om>=1.2.0",
+    "redis[hiredis]>=8.1.0",
     "taskiq>=0.13.0",
     "taskiq-redis>=1.2.4",
 ]

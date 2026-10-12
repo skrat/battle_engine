@@ -1,54 +1,34 @@
 import httpx2
 import pytest
-import pytest_asyncio
-from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.ext.asyncio.engine import AsyncEngine
-from sqlmodel.ext.asyncio.session import AsyncSession
+from redis.asyncio import BlockingConnectionPool, Redis
 
+from battle_engine.db import make_blocking_pool
+from battle_engine.main import app, get_redis
+from battle_engine.models import Player
 from battle_engine.settings import settings
 
-settings.DB_URL = "sqlite+aiosqlite:///test.sqlite3"
 
-from battle_engine.db import async_session, db_session, drop_models, engine, init_models
-from battle_engine.main import app
-
-
-@pytest_asyncio.fixture(scope="session")
-async def db_engine():
-    yield engine
-
-
-@pytest_asyncio.fixture
-async def db_sessionmaker(db_engine: AsyncEngine):
-    await init_models(db_engine)
-    yield async_session
-    await drop_models(db_engine)
-
-
-@pytest_asyncio.fixture
-async def db(db_engine: AsyncEngine, db_sessionmaker: async_sessionmaker[AsyncSession]):
-    async with db_sessionmaker() as session:
-        yield session
+@pytest.fixture(scope="session")
+async def redis_pool():
+    pool = make_blocking_pool()
+    yield pool
+    await pool.disconnect()
 
 
 @pytest.fixture
-def client(db: AsyncSession):
-    def db_session_override():
-        yield db
-
-    app.dependency_overrides[db_session] = db_session_override
-    yield TestClient(app, headers={settings.API_KEY_HEADER: settings.API_KEY_SECRET})
-    app.dependency_overrides.clear()
+async def redis(redis_pool: BlockingConnectionPool):
+    async with Redis(connection_pool=redis_pool) as r:
+        await r.flushdb()
+        Player.Meta.database = r
+        yield r
 
 
 @pytest.fixture
-async def aclient(db_sessionmaker: async_sessionmaker[AsyncSession]):
-    async def db_session_override():
-        async with db_sessionmaker() as session:
-            yield session
+async def client(redis: Redis):
+    async def redis_override():
+        yield redis
 
-    app.dependency_overrides[db_session] = db_session_override
+    app.dependency_overrides[get_redis] = redis_override
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app),
         headers={settings.API_KEY_HEADER: settings.API_KEY_SECRET},

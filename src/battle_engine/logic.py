@@ -1,12 +1,10 @@
-import asyncio
 import logging
 import math
 import random
 from collections.abc import Coroutine
 from typing import Any
 
-from sqlmodel import update
-from sqlmodel.ext.asyncio.session import AsyncSession
+from redis.asyncio import Redis, WatchError
 
 from .models import (
     BattleRequest,
@@ -100,7 +98,7 @@ def process_battle(req: BattleRequestReady, max_turns=20):
 
 
 async def resolve_battle(
-    db: AsyncSession,
+    redis: Redis,
     req: BattleRequest,
     poll_interval=0.01,
     wait_for: Coroutine[None, None, Any] | None = None,
@@ -111,34 +109,36 @@ async def resolve_battle(
     p2_id = req.opponent_id
     p1: Player | None = None
     p2: Player | None = None
-    await db.commit()
+
+    p1_lock_key = Player.LOCK_KEY.format(id=p1_id)
+    p2_lock_key = Player.LOCK_KEY.format(id=p2_id)
+
     lock_attempts = 0
-    while p1 is None or p2 is None:
-        # Poll the DB for players
-        lock_attempts += 1
-        async with db.begin():
-            # For each attempt, start a transaction to ensure isolation
-            r = await db.exec(
-                update(Player)
-                .where(Player.id.in_([p1_id, p2_id]))  # pyright: ignore
-                .where(Player.battle_lock == False)  # pyright: ignore[reportArgumentType]
-                .values(battle_lock=True)
-                .returning(Player)
-            )
-            # UPDATE locks the row exclusively during this transaction
-            rows = r.all()
-            if len(rows) != 2:
-                # We failed to lock both players, rollback
-                await db.rollback()
-            else:
-                await db.commit()
-                p1 = rows[0][0]
-                p2 = rows[1][0]
+    async with redis.pipeline(transaction=True) as pipe:
+        # Repeat until successful
+        while True:
+            # Watch the locking key
+            try:
+                await pipe.watch(p1_lock_key, p2_lock_key)
+                p1_lock = await pipe.get(p1_lock_key)
+                p2_lock = await pipe.get(p1_lock_key)
+                if p1_lock or p2_lock:
+                    lock_attempts += 1
+                    continue
+                pipe.multi()
+                pipe.set(p1_lock_key, 1)
+                pipe.set(p2_lock_key, 1)
+                await pipe.execute()
                 break
-        await asyncio.sleep(poll_interval)
+            except WatchError:
+                lock_attempts += 1
+                continue
+
+    p1 = await Player.get(p1_id)
+    p2 = await Player.get(p2_id)
 
     assert p1 is not None and p2 is not None
-    log.debug(f"Players {p1.id}, {p2.id} locked")
+    log.debug(f"Players {p1.pk}, {p2.pk} locked")
 
     req_ready = BattleRequestReady(
         initiator=p1,
@@ -150,15 +150,17 @@ async def resolve_battle(
     if wait_for is not None:
         await wait_for
 
+    await p1.save()
+    await p2.save()
+
     # Release the players' locks, so they'll become available for future battles
-    await db.commit()
-    async with db.begin():
-        await db.exec(
-            update(Player)
-            .where(Player.id.in_([p1_id, p2_id]))  # pyright: ignore
-            .values(battle_lock=False)
-        )
-    log.debug(f"Players {p1.id}, {p2.id} released")
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.multi()
+        pipe.delete(p1_lock_key)
+        pipe.delete(p2_lock_key)
+        await pipe.execute()
+    log.debug(f"Players {p1.pk}, {p2.pk} released")
+
     return BattleResultStats(
         num_lock_attempts=lock_attempts,
         **result.model_dump(),
