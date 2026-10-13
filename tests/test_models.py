@@ -40,7 +40,7 @@ async def test_leaderboard_updates(redis: Redis):
     assert len(lb) == 1
     assert lb[0].rank == 1
     assert lb[0].score == 100
-    assert lb[0].player.name == p1.name
+    assert lb[0].player == p1.pk
 
     p2 = Player(name="two")
     await p2.create(redis)
@@ -53,5 +53,5 @@ async def test_leaderboard_updates(redis: Redis):
     assert len(lb) == 2
     assert lb[0].rank == 1
     assert lb[0].score == 300
-    assert lb[0].player.name == p1.name
-    assert lb[1].player.name == p2.name
+    assert lb[0].player == p1.pk
+    assert lb[1].player == p2.pk

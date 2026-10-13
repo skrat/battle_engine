@@ -1,10 +1,12 @@
 from typing import Annotated, ClassVar
 
 from annotated_types import Ge, Le
-from aredis_om import HashModel, NotFoundError
+from aredis_om import HashModel
 from pydantic import BaseModel, StringConstraints
 from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
+
+from .db import REDIS
 
 
 class PlayerCreate(BaseModel):
@@ -31,9 +33,11 @@ class Player(PlayerCreate, HashModel, index=True):
     NAME_SET: ClassVar[str] = "player:name"
     LOCK_KEY: ClassVar[str] = "player:lock:{id}"
 
-    async def create(self, r: Redis):
-        self.Meta.database = r
+    @classmethod
+    def db(cls):
+        return REDIS.get()
 
+    async def create(self, r: Redis):
         async def tx(pipe: Pipeline):
             exists = await r.sismember(self.NAME_SET, self.name)
             if exists:
@@ -45,14 +49,6 @@ class Player(PlayerCreate, HashModel, index=True):
         result = await r.transaction(tx, self.NAME_SET)
         if not len(result):
             raise self.NameExists(self.name)
-
-    @classmethod
-    async def exists(cls, r: Redis, id: str) -> bool:
-        try:
-            await Player.get(id)
-            return True
-        except NotFoundError:
-            return False
 
 
 class BattleRequest(BaseModel):
@@ -81,54 +77,32 @@ class BattleResultStats(BattleResult):
     num_lock_attempts: int = 1
 
 
-class LeaderboardPlayer(BaseModel):
-    """Public API schema."""
-
-    id: str
-    name: str
-
-
-class LeaderboardEntryPublic(BaseModel):
+class LeaderboardEntry(BaseModel):
     """Public API schema."""
 
     rank: int
     score: int
-    player: LeaderboardPlayer
+    player: str
 
 
 class Leaderboard:
-    """Entry in the leaderboard. Only one per player is allowed to exist."""
+    """Leaderboard implemented using Redis sorted set."""
 
     PLAYER_SET: ClassVar[str] = "player:score"
-    PLAYER_KEY: ClassVar[str] = "player:score:{id}"
 
     @classmethod
-    async def ranked(cls, r: Redis) -> list[LeaderboardEntryPublic]:
+    async def ranked(cls, r: Redis[str]) -> list[LeaderboardEntry]:
         """Ordered leaderboard entries, by player's score."""
-        players: list[str] = list(await r.smembers(cls.PLAYER_SET))
-        scores = [
-            int(await r.get(cls.PLAYER_KEY.format(id=pk)) or -1) for pk in players
-        ]
-        srted = sorted(
-            zip(players, scores),
-            key=lambda entry: entry[1],
-            reverse=True,
-        )
-        result = []
-        for i, (pk, score) in enumerate(srted):
-            p = await Player.get(pk)
-            assert p is not None
-            result.append(
-                LeaderboardEntryPublic(
-                    rank=i + 1,
-                    score=score,
-                    player=LeaderboardPlayer(id=pk, name=p.name),
-                )
+        xs = await r.zrevrange(cls.PLAYER_SET, 0, 100, withscores=True)
+        return [
+            LeaderboardEntry(
+                rank=i + 1,
+                score=int(score),
+                player=player,
             )
-        return result
+            for i, (player, score) in enumerate(xs)
+        ]
 
     @classmethod
-    async def update(cls, r: Redis, player_pk: str, score: int):
-        total = await r.incrby(cls.PLAYER_KEY.format(id=player_pk), score)
-        await r.sadd(cls.PLAYER_SET, player_pk)
-        return total
+    async def update(cls, r: Redis, player_id: str, score: int):
+        return await r.zincrby(cls.PLAYER_SET, score, player_id)

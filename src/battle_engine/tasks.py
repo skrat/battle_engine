@@ -4,8 +4,7 @@ from redis.asyncio import Redis
 from taskiq import Context, TaskiqDepends, TaskiqEvents, TaskiqState
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 
-from battle_engine.main import make_blocking_pool
-
+from .db import REDIS, make_blocking_pool
 from .logic import resolve_battle
 from .models import BattleRequest
 from .settings import settings
@@ -38,7 +37,8 @@ async def process_battle_task(
     context: Annotated[Context, TaskiqDepends()],
 ) -> dict:
     async with Redis(connection_pool=context.state.redis_pool) as r:
-        req = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
-        result = await resolve_battle(r, req)
-        print(f"Processed battle {initiator_id} vs. {opponent_id}")
-        return result.model_dump()
+        with REDIS.set(r):
+            req = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
+            result = await resolve_battle(r, req)
+            print(f"Processed battle {initiator_id} vs. {opponent_id}")
+            return result.model_dump()

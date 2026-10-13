@@ -4,7 +4,7 @@ from redis.asyncio import BlockingConnectionPool, Redis
 
 from battle_engine.db import make_blocking_pool
 from battle_engine.main import app, get_redis
-from battle_engine.models import Player
+from battle_engine.models import REDIS
 from battle_engine.settings import settings
 
 
@@ -19,8 +19,8 @@ async def redis_pool():
 async def redis(redis_pool: BlockingConnectionPool):
     async with Redis(connection_pool=redis_pool) as r:
         await r.flushdb()
-        Player.Meta.database = r
-        yield r
+        with REDIS.set(r):
+            yield r
 
 
 @pytest.fixture

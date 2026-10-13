@@ -74,10 +74,9 @@ async def test_concurrent_battles_dont_overlap_players(
                     initiator_id=p1.pk,
                     opponent_id=p2.pk,
                 ),
-                wait_for=asyncio.sleep(0.01),
+                wait_for=asyncio.sleep(0.05),
             )
 
     rs = await asyncio.gather(*(make_battle() for _ in range(3)))
 
-    attempts_max = max(*(r.num_lock_attempts for r in rs))
-    assert attempts_max > 1
+    assert any(r.num_lock_attempts > 1 for r in rs)

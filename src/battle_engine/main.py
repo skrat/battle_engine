@@ -1,23 +1,23 @@
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from redis.asyncio import Redis
+from taskiq import AsyncTaskiqTask
 
 from battle_engine.db import make_blocking_pool
 
 from .logic import resolve_battle
 from .models import (
+    REDIS,
     BattleRequest,
     BattleResult,
     BattleResultStats,
     Leaderboard,
-    LeaderboardEntryPublic,
-    LeaderboardPlayer,
+    LeaderboardEntry,
     Player,
     PlayerCreate,
 )
@@ -28,18 +28,25 @@ from .tasks import broker, process_battle_task
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    app.state.redis = make_blocking_pool()
+    # Init Redis pool and client
+    app.state.redis_pool = make_blocking_pool()
+    app.state.redis = Redis(connection_pool=app.state.redis_pool)
+    # Optionallyt init Taskiq broker
     if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.startup()
+
     yield
+
+    # Deinit taskiq
     if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.shutdown()
-    await app.state.redis.disconnect()
+    # Deinit Redis
+    await app.state.redis_pool.disconnect()
 
 
 async def get_redis(request: Request):
-    async with Redis(connection_pool=request.app.state.redis) as r:
-        Player.Meta.database = r
+    r = request.app.state.redis
+    with REDIS.set(r):
         yield r
 
 
@@ -78,36 +85,26 @@ async def request_battle(
     ensure immediate processing. This also satisfies spec. conditions:
     - Handle battles in the order they are submitted.
     """
-    try:
-        ex = await asyncio.gather(
-            Player.exists(r, initiator_id),
-            Player.exists(r, opponent_id),
-        )
-        if not ex[0]:
-            raise HTTPException(404, [f"{initiator_id} not found"])
-        if not ex[1]:
-            raise HTTPException(404, [f"{opponent_id} not found"])
-        req = BattleRequest(
-            initiator_id=initiator_id,
-            opponent_id=opponent_id,
-        )
-        result = await resolve_battle(r, req)
-        assert result.winner.pk is not None
-        await Leaderboard.update(
-            r,
-            result.winner.pk,
-            sum(result.stolen),
-        )
-        return JSONResponse(
-            result.model_dump(exclude={"num_lock_attempts": True}),
-            headers=settings.STAT_HEADER_FLAG
-            and {
-                settings.STAT_HEADER: str(result.num_lock_attempts),
-            }
-            or {},
-        )
-    except ValidationError as ex:
-        raise RequestValidationError(ex.errors())
+    if initiator_id == opponent_id:
+        raise RequestValidationError(["self-battle not allowed"])
+
+    req = BattleRequest(
+        initiator_id=initiator_id,
+        opponent_id=opponent_id,
+    )
+    result = await resolve_battle(r, req)
+    assert result.winner.pk is not None
+
+    await Leaderboard.update(r, result.winner.pk, sum(result.stolen))
+
+    return JSONResponse(
+        result.model_dump(exclude={"num_lock_attempts": True}),
+        headers=settings.STAT_HEADER_FLAG
+        and {
+            settings.STAT_HEADER: str(result.num_lock_attempts),
+        }
+        or {},
+    )
 
 
 @app.post("/battle_defer/{initiator_id}/{opponent_id}")
@@ -115,50 +112,38 @@ async def request_battle_defer(
     *, _: Protected, r: RedisDep, initiator_id: str, opponent_id: str
 ):
     """Same as /battle but uses taskiq and a Redis broker."""
-    try:
-        if not (
-            await Player.exists(r, initiator_id) and await Player.exists(r, opponent_id)
-        ):
-            raise HTTPException(404)
-        task = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
-            initiator_id,
-            opponent_id,
-        )
-        task_result = await task.wait_result(timeout=1)
-        result = BattleResultStats(**task_result.return_value)
-        assert result.winner.pk
-        await Leaderboard.update(
-            r,
-            result.winner.pk,
-            sum(result.stolen),
-        )
-        return JSONResponse(
-            result.model_dump(exclude={"num_lock_attempts": True}),
-            headers=settings.STAT_HEADER_FLAG
-            and {
-                settings.STAT_HEADER: str(result.num_lock_attempts),
-            }
-            or {},
-        )
-    except ValidationError as ex:
-        raise RequestValidationError(ex.errors())
+    if initiator_id == opponent_id:
+        raise RequestValidationError(["self-battle not allowed"])
+
+    task: AsyncTaskiqTask = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
+        initiator_id,
+        opponent_id,
+    )
+    task_result = await task.wait_result(
+        timeout=settings.BATTLE_LOCK_TTL,
+    )
+    if task_result.error is not None:
+        raise task_result.error
+
+    result = BattleResultStats(**task_result.return_value)
+    assert result.winner.pk
+
+    await Leaderboard.update(r, result.winner.pk, sum(result.stolen))
+
+    return JSONResponse(
+        result.model_dump(exclude={"num_lock_attempts": True}),
+        headers=settings.STAT_HEADER_FLAG
+        and {
+            settings.STAT_HEADER: str(result.num_lock_attempts),
+        }
+        or {},
+    )
 
 
 @app.get("/leaderboard")
-async def leaderboard(*, _: Protected, r: RedisDep) -> list[LeaderboardEntryPublic]:
+async def leaderboard(*, _: Protected, r: RedisDep) -> list[LeaderboardEntry]:
     """Retrieve sorted leaderboard."""
-    board = await Leaderboard.ranked(r)
-    return [
-        LeaderboardEntryPublic(
-            rank=i + 1,
-            score=ent.score,
-            player=LeaderboardPlayer(
-                id=ent.player.id,
-                name=ent.player.name,
-            ),
-        )
-        for i, ent in enumerate(board)
-    ]
+    return await Leaderboard.ranked(r)
 
 
 def start():

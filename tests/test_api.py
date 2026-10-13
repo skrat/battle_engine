@@ -144,7 +144,7 @@ async def test_leaderboard(
     data = resp.json()
 
     assert len(data) == 1
-    assert data[0]["player"]["id"] == p1.pk
+    assert data[0]["player"] == p1.pk
 
     await client.post(f"{battle_path}/{p3.pk}/{p1.pk}")
     await client.post(f"{battle_path}/{p4.pk}/{p1.pk}")

@@ -11,12 +11,20 @@ class Settings(BaseSettings):
     )
 
     REDIS_URL: str
-    REDIS_MAX_CONNECTIONS: int = 100
+    REDIS_MAX_CONNECTIONS: int = 750
+    REDIS_TIMEOUT: int = 30
+    REDIS_SOCKET_TIMEOUT: int | None = None
+
     API_KEY_HEADER: str
     API_KEY_SECRET: str
-    WITH_TASKIQ: bool = False
+
     STAT_HEADER: str = "X-Battle-Lock-Stat"
     STAT_HEADER_FLAG: bool = True
+
+    BATTLE_LOCK_TTL: int = 2
+    BATTLE_LOCK_POLL_INTERVAL: float = 0.002
+
+    WITH_TASKIQ: bool = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

@@ -1,10 +1,16 @@
+import asyncio
 import logging
 import math
 import random
-from collections.abc import Coroutine
+import uuid
+from collections.abc import Awaitable
 from typing import Any
 
-from redis.asyncio import Redis, WatchError
+from aredis_om import NotFoundError
+from fastapi import HTTPException
+from redis.asyncio import Redis
+
+from battle_engine.settings import settings
 
 from .models import (
     BattleRequest,
@@ -15,6 +21,29 @@ from .models import (
 )
 
 log = logging.getLogger(__name__)
+
+SCRIPT_ACQUIRE_PLAYERS_SRC = """
+if redis.call('get', KEYS[1]) then return 0 end
+if redis.call('get', KEYS[2]) then return 0 end
+redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('set', KEYS[2], ARGV[1], 'EX', ARGV[2])
+return 1
+"""
+
+SCRIPT_RELEASE_PLAYERS_SRC = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    redis.call('del', KEYS[1])
+end
+if redis.call('get', KEYS[2]) == ARGV[1] then
+    redis.call('del', KEYS[2])
+end
+"""
+
+# Prepared scripts. There is no I/O and no connection here, just precomputed
+# digest for each script.
+_encoder = Redis.from_url(settings.REDIS_URL, decode_responses=True)  # no I/O
+script_acquire_players = _encoder.register_script(SCRIPT_ACQUIRE_PLAYERS_SRC)
+script_release_players = _encoder.register_script(SCRIPT_RELEASE_PLAYERS_SRC)
 
 
 def pstat(p: Player):
@@ -100,11 +129,12 @@ def process_battle(req: BattleRequestReady, max_turns=20):
 async def resolve_battle(
     redis: Redis,
     req: BattleRequest,
-    poll_interval=0.01,
-    wait_for: Coroutine[None, None, Any] | None = None,
+    poll_interval=settings.BATTLE_LOCK_POLL_INTERVAL,
+    wait_for: Awaitable[Any] | None = None,
 ) -> BattleResultStats:
     """Wait for battle players to become available (until all battles they are in are
     finished), then processes the battle and returns the outcome."""
+
     p1_id = req.initiator_id
     p2_id = req.opponent_id
     p1: Player | None = None
@@ -112,53 +142,51 @@ async def resolve_battle(
 
     p1_lock_key = Player.LOCK_KEY.format(id=p1_id)
     p2_lock_key = Player.LOCK_KEY.format(id=p2_id)
+    lock_token = uuid.uuid7().hex
 
-    lock_attempts = 0
-    async with redis.pipeline(transaction=True) as pipe:
-        # Repeat until successful
-        while True:
-            # Watch the locking key
-            try:
-                await pipe.watch(p1_lock_key, p2_lock_key)
-                p1_lock = await pipe.get(p1_lock_key)
-                p2_lock = await pipe.get(p1_lock_key)
-                if p1_lock or p2_lock:
-                    lock_attempts += 1
-                    continue
-                pipe.multi()
-                pipe.set(p1_lock_key, 1)
-                pipe.set(p2_lock_key, 1)
-                await pipe.execute()
-                break
-            except WatchError:
-                lock_attempts += 1
-                continue
+    lock_attempts = 1
+    while not await script_acquire_players(
+        keys=[p1_lock_key, p2_lock_key],
+        args=[lock_token, settings.BATTLE_LOCK_TTL],
+        client=redis,
+    ):
+        lock_attempts += 1
+        await asyncio.sleep(poll_interval)
+        poll_interval *= 2.0
 
-    p1 = await Player.get(p1_id)
-    p2 = await Player.get(p2_id)
+    log.debug(f"Players {p1_id}, {p2_id} locked")
 
-    assert p1 is not None and p2 is not None
-    log.debug(f"Players {p1.pk}, {p2.pk} locked")
+    try:
+        p1 = await Player.get(p1_id)
+        p2 = await Player.get(p2_id)
 
-    req_ready = BattleRequestReady(
-        initiator=p1,
-        opponent=p2,
-        **req.model_dump(),
-    )
-    result = process_battle(req_ready)
+        req_ready = BattleRequestReady(
+            initiator=p1,
+            opponent=p2,
+            **req.model_dump(),
+        )
+        result = process_battle(req_ready)
 
-    if wait_for is not None:
-        await wait_for
+        if wait_for is not None:
+            await wait_for
 
-    await p1.save()
-    await p2.save()
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.multi()
+            await p1.save(pipeline=pipe)
+            await p2.save(pipeline=pipe)
+            await pipe.execute()
 
-    # Release the players' locks, so they'll become available for future battles
-    async with redis.pipeline(transaction=True) as pipe:
-        pipe.multi()
-        pipe.delete(p1_lock_key)
-        pipe.delete(p2_lock_key)
-        await pipe.execute()
+    except NotFoundError as ex:
+        # We can raise to HTTP server safely
+        raise HTTPException(404, [f"{ex.args} not found"])
+    finally:
+        # Release the players' locks, so they'll become available for future battles
+        await script_release_players(
+            keys=[p1_lock_key, p2_lock_key],
+            args=[lock_token],
+            client=redis,
+        )
+
     log.debug(f"Players {p1.pk}, {p2.pk} released")
 
     return BattleResultStats(

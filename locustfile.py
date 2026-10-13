@@ -10,6 +10,7 @@ from requests import Response
 
 from battle_engine.settings import settings
 
+TIMEOUT = 5
 HEADERS = {settings.API_KEY_HEADER: settings.API_KEY_SECRET}
 BATTLE_PATH = "/battle_defer" if os.getenv("WITH_REDIS") else "/battle"
 
@@ -78,8 +79,8 @@ def make_player():
 
 class BattleEngine(FastHttpUser):
     wait_time = between(1, 5)
-
-    players: list[int]
+    network_timeout = TIMEOUT
+    connection_timeout = TIMEOUT
 
     def __init__(self, environment) -> None:
         super().__init__(environment)
@@ -90,7 +91,7 @@ class BattleEngine(FastHttpUser):
             "/player",
             json=make_player(),
             headers=HEADERS,
-        ).json()["id"]
+        ).json()["pk"]
 
     def post_battle(self, p1: int, p2: int):
         self.client.request_name = f"{BATTLE_PATH}/[p1]/[p2]"
@@ -112,3 +113,7 @@ class BattleEngine(FastHttpUser):
             while p2 is p1:
                 p2 = random.choice(self.players)
             self.post_battle(p1, p2)
+
+    @task(1)
+    def get_leaderboard(self):
+        self.client.get("/leaderboard", headers=HEADERS)
