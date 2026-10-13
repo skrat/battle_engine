@@ -23,11 +23,27 @@ from .models import (
 log = logging.getLogger(__name__)
 
 SCRIPT_ACQUIRE_PLAYERS_SRC = """
-if redis.call('get', KEYS[1]) then return 0 end
-if redis.call('get', KEYS[2]) then return 0 end
+-- KEYS[1] = p1 lock key
+-- KEYS[2] = p2 lock key
+-- KEYS[3] = p1 player key
+-- KEYS[4] = p2 player key
+-- ARGV[1] = lock token
+-- ARGV[2] = lock TTL (sec)
+
+if redis.call('exists', KEYS[1]) == 1 or redis.call('exists', KEYS[2]) == 1 then
+    -- locked by someone, retry
+    return 0
+end
+
+local p1 = redis.call('hgetall', KEYS[3])
+local p2 = redis.call('hgetall', KEYS[4])
+
+if #p1 == 0 then return -1 end      -- initiator not found
+if #p2 == 0 then return -2 end      -- opponent not found
+
 redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
 redis.call('set', KEYS[2], ARGV[1], 'EX', ARGV[2])
-return 1
+return {1, p1, p2}
 """
 
 SCRIPT_RELEASE_PLAYERS_SRC = """
@@ -145,21 +161,36 @@ async def resolve_battle(
     lock_token = uuid.uuid7().hex
 
     lock_attempts = 1
-    while not await script_acquire_players(
-        keys=[p1_lock_key, p2_lock_key],
-        args=[lock_token, settings.BATTLE_LOCK_TTL],
-        client=redis,
-    ):
-        lock_attempts += 1
-        await asyncio.sleep(poll_interval)
-        poll_interval *= 2.0
+    while True:
+        res = await script_acquire_players(
+            keys=[
+                Player.LOCK_KEY.format(id=p1_id),
+                Player.LOCK_KEY.format(id=p2_id),
+                Player.make_primary_key(p1_id),
+                Player.make_primary_key(p2_id),
+            ],
+            args=[lock_token, settings.BATTLE_LOCK_TTL],
+            client=redis,
+        )
+        if isinstance(res, int):
+            if res == 0:
+                lock_attempts += 1
+                await asyncio.sleep(poll_interval)
+                poll_interval = min(
+                    poll_interval * 2,
+                    settings.BATTLE_LOCK_MAX_POLL,
+                )
+                continue
+            missing_id = p1_id if res == -1 else p2_id
+            raise HTTPException(404, [f"player {missing_id} not found"])
+        _, p1_doc, p2_doc = res
+        p1 = Player.rehydrate(p1_id, p1_doc)
+        p2 = Player.rehydrate(p2_id, p2_doc)
+        break
 
     log.debug(f"Players {p1_id}, {p2_id} locked")
 
     try:
-        p1 = await Player.get(p1_id)
-        p2 = await Player.get(p2_id)
-
         req_ready = BattleRequestReady(
             initiator=p1,
             opponent=p2,

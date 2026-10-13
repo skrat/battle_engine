@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     BATTLE_LOCK_TTL: int = 2
     BATTLE_LOCK_POLL_INTERVAL: float = 0.002
+    BATTLE_LOCK_MAX_POLL: float = 2
 
     WITH_TASKIQ: bool = False
 

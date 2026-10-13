@@ -37,6 +37,16 @@ class Player(PlayerCreate, HashModel, index=True):
     def db(cls):
         return REDIS.get()
 
+    @classmethod
+    def rehydrate(cls, pk: str, doc: dict):
+        """Similar to Player.get. It works because we only have int & str fields."""
+        return Player.model_validate(
+            {
+                **dict(zip(doc[::2], doc[1::2])),
+                "pk": pk,
+            }
+        )
+
     async def create(self, r: Redis):
         async def tx(pipe: Pipeline):
             exists = await r.sismember(self.NAME_SET, self.name)
