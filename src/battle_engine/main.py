@@ -93,9 +93,6 @@ async def request_battle(
         opponent_id=opponent_id,
     )
     result = await resolve_battle(r, req)
-    assert result.winner.pk is not None
-
-    await Leaderboard.update(r, result.winner.pk, sum(result.stolen))
 
     return JSONResponse(
         result.model_dump(exclude={"num_lock_attempts": True}),
@@ -126,9 +123,6 @@ async def request_battle_defer(
         raise task_result.error
 
     result = BattleResultStats(**task_result.return_value)
-    assert result.winner.pk
-
-    await Leaderboard.update(r, result.winner.pk, sum(result.stolen))
 
     return JSONResponse(
         result.model_dump(exclude={"num_lock_attempts": True}),

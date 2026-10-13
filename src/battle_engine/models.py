@@ -60,6 +60,17 @@ class Player(PlayerCreate, HashModel, index=True):
         if not len(result):
             raise self.NameExists(self.name)
 
+    def to_args(self) -> list:
+        doc = self.model_dump()
+        flat: list = []
+        for k, v in doc.items():
+            if v is None:
+                continue
+            if isinstance(v, bool):
+                v = "1" if v else "0"
+            flat += [k, v]
+        return flat
+
 
 class BattleRequest(BaseModel):
     """For submission to battle engine."""
