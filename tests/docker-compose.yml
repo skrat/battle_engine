@@ -1,0 +1,6 @@
+services:
+  battleengine_pytest_redis:
+    image: redis:8
+    ports:
+      - "6379:6379"
+    restart: unless-stopped

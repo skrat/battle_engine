@@ -1,0 +1,31 @@
+services:
+
+  redis:
+    image: redis:8
+    container_name: redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s       # Check every 5 seconds during bootstrap initialization
+      timeout: 3s        # Max time allowed for the ping response
+      retries: 5         # Fail status marked if 5 consecutive checks fail
+      start_period: 2s
+
+  battle-engine:
+    build:  .
+    stop_signal: SIGINT
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - '8000:8000'
+
+volumes:
+  redis-data:
+    driver: local

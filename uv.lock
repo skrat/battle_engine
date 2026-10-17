@@ -191,6 +191,7 @@ dev = [
     { name = "locust" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-docker" },
 ]
 
 [package.metadata]
@@ -209,6 +210,7 @@ dev = [
     { name = "locust", specifier = ">=2.46.7" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-docker", specifier = ">=3.2.6" },
 ]
 
 [[package]]
@@ -1804,6 +1806,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
+]
+
+[[package]]
+name = "pytest-docker"
+version = "3.2.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/98/5c5eb1de2919ebbc02bd6c9311326c40148607935ed314608145752d316f/pytest_docker-3.2.6.tar.gz", hash = "sha256:0b86f48e7f728e5171f0278fbf0ea358090ea76fbec2c5f9b25c7ba931fc3097", size = 13832, upload-time = "2026-10-16T12:00:09.557Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/74/c0514e67030241670ef3b61a18281c1b442c6f4918e62541b6c674ce6470/pytest_docker-3.2.6-py3-none-any.whl", hash = "sha256:aeabb385eeb4898bbab46fe13b7762df31da6a5cf446d0a6746cb00b69cea0b2", size = 8752, upload-time = "2026-10-16T12:00:08.288Z" },
 ]
 
 [[package]]

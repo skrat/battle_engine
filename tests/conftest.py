@@ -1,5 +1,6 @@
 import httpx2
 import pytest
+from redis import Redis as RedisSync
 from redis.asyncio import BlockingConnectionPool, Redis
 
 from battle_engine.db import make_blocking_pool
@@ -9,7 +10,23 @@ from battle_engine.settings import settings
 
 
 @pytest.fixture(scope="session")
-async def redis_pool():
+def redis_service(docker_ip, docker_services):
+    """Ensure that Redis service is up and responsive."""
+    port = docker_services.port_for("battleengine_pytest_redis", 6379)
+    url = f"redis://{docker_ip}:{port}"
+
+    def is_responsive(url: str) -> bool:
+        with RedisSync.from_url(url) as redis:
+            return redis.ping()
+
+    docker_services.wait_until_responsive(
+        timeout=30.0, pause=0.1, check=lambda: is_responsive(url)
+    )
+    return url
+
+
+@pytest.fixture(scope="session")
+async def redis_pool(redis_service):
     pool = make_blocking_pool()
     yield pool
     await pool.disconnect()
