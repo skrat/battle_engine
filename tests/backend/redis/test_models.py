@@ -4,7 +4,8 @@ import itertools
 import pytest
 from redis.asyncio import Redis
 
-from battle_engine.models import Leaderboard, Player
+from battle_engine.backend.redis.models import Leaderboard, Player
+from battle_engine.models import PlayerNameExists
 
 
 async def test_player_name_unique(redis: Redis):
@@ -12,7 +13,7 @@ async def test_player_name_unique(redis: Redis):
     p1 = Player(name="one")
     p2 = Player(name="one")
     await p1.create(redis)
-    with pytest.raises(Player.NameExists):
+    with pytest.raises(PlayerNameExists):
         await p2.create(redis)
     assert len([p async for p in await Player.all_pks()]) == 1
 
@@ -21,7 +22,7 @@ async def test_player_name_unique(redis: Redis):
     result = await asyncio.gather(
         *[p3.create(redis) for _ in range(10)], return_exceptions=True
     )
-    key = lambda x: isinstance(x, Player.NameExists)
+    key = lambda x: isinstance(x, PlayerNameExists)
     srt = sorted(result, key=key)
     groups = {k: list(g) for k, g in itertools.groupby(srt, key=key)}
     assert len(groups[True]) == 9  # Exceptions

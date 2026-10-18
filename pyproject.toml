@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "dotenv>=0.9.9",
     "fastapi[standard]>=0.142.2",
     "pydantic-settings>=2.15.0",
     "redis-om>=1.2.0",
@@ -38,6 +39,9 @@ dev = [
 [tool.ruff.lint.flake8-bugbear]
 # Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
 extend-immutable-calls = ["Depends", "fastapi.Depends", "Query", "fastapi.Query"]
+
+[tool.ruff.lint]
+ignore = ["UP046", "UP047"]
 
 [tool.pytest.ini_options]
 addopts = ["-s"]

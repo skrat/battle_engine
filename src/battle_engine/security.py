@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
-from .settings import settings
+from battle_engine.backend.redis.settings import settings
 
 api_key_header = APIKeyHeader(
     name=settings.API_KEY_HEADER,

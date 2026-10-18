@@ -1,32 +1,41 @@
+import logging
+import os
 from typing import Annotated
 
 from redis.asyncio import Redis
 from taskiq import Context, TaskiqDepends, TaskiqEvents, TaskiqState
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 
-from .db import REDIS, make_blocking_pool
-from .logic import resolve_battle
+from battle_engine.backend.shared import get_backend_impl
+
+from .backend.redis.db import make_blocking_pool
 from .models import BattleRequest
-from .settings import settings
+
+REDIS_URL = os.getenv("REDIS_URL")
+assert REDIS_URL
+
+log = logging.getLogger(__name__)
 
 result_backend = RedisAsyncResultBackend(
-    redis_url=settings.REDIS_URL,
+    redis_url=REDIS_URL,
 )
 
 broker = RedisStreamBroker(
-    url=settings.REDIS_URL,
+    url=REDIS_URL,
 ).with_result_backend(result_backend)
-
-redis_pool = make_blocking_pool()
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
 async def startup(state: TaskiqState) -> None:
+    log.info("Worker starting up")
+    state.backend = get_backend_impl()
     state.redis_pool = make_blocking_pool()
+    state.redis = Redis(connection_pool=state.redis_pool)
 
 
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def shutdown(state: TaskiqState) -> None:
+    log.info("Worker shutting down")
     await state.redis_pool.disconnect()
 
 
@@ -36,9 +45,7 @@ async def process_battle_task(
     opponent_id: str,
     context: Annotated[Context, TaskiqDepends()],
 ) -> dict:
-    async with Redis(connection_pool=context.state.redis_pool) as r:
-        with REDIS.set(r):
-            req = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
-            result = await resolve_battle(r, req)
-            print(f"Processed battle {initiator_id} vs. {opponent_id}")
-            return result.model_dump()
+    req = BattleRequest(initiator_id=initiator_id, opponent_id=opponent_id)
+    result = await context.state.backend.resolve_battle(req)
+    log.info(f"Processed battle {initiator_id} vs. {opponent_id}")
+    return result.model_dump()

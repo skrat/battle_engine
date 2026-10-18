@@ -5,52 +5,46 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from redis.asyncio import Redis
 from taskiq import AsyncTaskiqTask
 
-from battle_engine.db import make_blocking_pool
+from battle_engine.backend.shared import Backend, get_backend_impl
+from battle_engine.settings import settings
+from battle_engine.tasks import broker, process_battle_task
 
-from .logic import resolve_battle
 from .models import (
-    REDIS,
     BattleRequest,
     BattleResult,
     BattleResultStats,
-    Leaderboard,
     LeaderboardEntry,
-    Player,
-    PlayerCreate,
+    PlayerBase,
+    PlayerFull,
+    PlayerNameExists,
 )
 from .security import Protected
-from .settings import settings
-from .tasks import broker, process_battle_task
 
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    # Init Redis pool and client
-    app.state.redis_pool = make_blocking_pool()
-    app.state.redis = Redis(connection_pool=app.state.redis_pool)
-    # Optionallyt init Taskiq broker
+    # Import and intialize the backend
+    app.state.backend = get_backend_impl()
+
+    # Optionally init Taskiq broker
     if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.startup()
 
-    yield
+    async with app.state.backend.lifespan(app):
+        yield
 
     # Deinit taskiq
     if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.shutdown()
-    # Deinit Redis
-    await app.state.redis_pool.disconnect()
 
 
-async def get_redis(request: Request):
-    r = request.app.state.redis
-    with REDIS.set(r):
-        yield r
+async def get_backend(request: Request):
+    yield request.app.state.backend
 
 
-RedisDep = Annotated[Redis, Depends(get_redis)]
+BackendDep = Annotated[Backend, Depends(get_backend)]
 
 app = FastAPI(
     title="Battle Engine",
@@ -64,14 +58,14 @@ app = FastAPI(
 )
 
 
-@app.post("/player", response_model=Player)
-async def create_player(*, _: Protected, r: RedisDep, player: PlayerCreate) -> Player:
+@app.post("/player", response_model=PlayerFull)
+async def create_player(
+    *, _: Protected, backend: BackendDep, player: PlayerBase
+) -> PlayerFull:
     """Create player endpoint."""
     try:
-        clean = Player.model_validate(player)
-        await clean.create(r)
-        return clean
-    except Player.NameExists:
+        return await backend.create_player(player)
+    except PlayerNameExists:
         raise RequestValidationError(["name"])
     except ValidationError as ex:
         raise RequestValidationError(ex.errors())
@@ -79,7 +73,7 @@ async def create_player(*, _: Protected, r: RedisDep, player: PlayerCreate) -> P
 
 @app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
 async def request_battle(
-    *, _: Protected, r: RedisDep, initiator_id: str, opponent_id: str
+    *, _: Protected, backend: BackendDep, initiator_id: str, opponent_id: str
 ):
     """Submit battle endpoint. Battles are processed inside the request handler to
     ensure immediate processing. This also satisfies spec. conditions:
@@ -92,10 +86,10 @@ async def request_battle(
         initiator_id=initiator_id,
         opponent_id=opponent_id,
     )
-    result = await resolve_battle(r, req)
+    result = await backend.resolve_battle(req)
 
     return JSONResponse(
-        result.model_dump(exclude={"num_lock_attempts": True}),
+        result.result.model_dump(),
         headers=settings.STAT_HEADER_FLAG
         and {
             settings.STAT_HEADER: str(result.num_lock_attempts),
@@ -104,10 +98,8 @@ async def request_battle(
     )
 
 
-@app.post("/battle_defer/{initiator_id}/{opponent_id}")
-async def request_battle_defer(
-    *, _: Protected, r: RedisDep, initiator_id: str, opponent_id: str
-):
+@app.post("/battle_defer/{initiator_id}/{opponent_id}", response_model=BattleResult)
+async def request_battle_defer(*, _: Protected, initiator_id: str, opponent_id: str):
     """Same as /battle but uses taskiq and a Redis broker."""
     if initiator_id == opponent_id:
         raise RequestValidationError(["self-battle not allowed"])
@@ -117,7 +109,7 @@ async def request_battle_defer(
         opponent_id,
     )
     task_result = await task.wait_result(
-        timeout=settings.BATTLE_LOCK_TTL,
+        timeout=5,
     )
     if task_result.error is not None:
         raise task_result.error
@@ -125,7 +117,7 @@ async def request_battle_defer(
     result = BattleResultStats(**task_result.return_value)
 
     return JSONResponse(
-        result.model_dump(exclude={"num_lock_attempts": True}),
+        result.result.model_dump(),
         headers=settings.STAT_HEADER_FLAG
         and {
             settings.STAT_HEADER: str(result.num_lock_attempts),
@@ -135,9 +127,9 @@ async def request_battle_defer(
 
 
 @app.get("/leaderboard")
-async def leaderboard(*, _: Protected, r: RedisDep) -> list[LeaderboardEntry]:
+async def leaderboard(*, _: Protected, backend: BackendDep) -> list[LeaderboardEntry]:
     """Retrieve sorted leaderboard."""
-    return await Leaderboard.ranked(r)
+    return await backend.leaderboard()
 
 
 def start():

@@ -1,7 +1,14 @@
+import os
+
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+load_dotenv()
 
-class Settings(BaseSettings):
+SETTINGS_MODULE = os.getenv("SETTINGS_MODULE", "battle_engine.backend.redis.settings")
+
+
+class SettingsBase(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -10,10 +17,7 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
-    REDIS_URL: str
-    REDIS_MAX_CONNECTIONS: int = 750
-    REDIS_TIMEOUT: int = 30
-    REDIS_SOCKET_TIMEOUT: int | None = None
+    BACKEND: str = "battle_engine.backend.redis.impl:RedisBackend"
 
     API_KEY_HEADER: str
     API_KEY_SECRET: str
@@ -21,16 +25,12 @@ class Settings(BaseSettings):
     STAT_HEADER: str = "X-Battle-Lock-Stat"
     STAT_HEADER_FLAG: bool = True
 
-    BATTLE_LOCK_TTL: int = 2
-    BATTLE_LOCK_POLL_INTERVAL: float = 0.002
-    BATTLE_LOCK_MAX_POLL: float = 2
-
     WITH_TASKIQ: bool = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        for field_name in Settings.model_fields:
+        for field_name in self.__class__.model_fields:
             value = getattr(self, field_name)
             if (
                 isinstance(value, str)
@@ -43,4 +43,4 @@ class Settings(BaseSettings):
                 setattr(self, field_name, value[1:-1])
 
 
-settings = Settings()
+settings = SettingsBase()
