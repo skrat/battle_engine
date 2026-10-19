@@ -5,7 +5,6 @@ from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
 
 from ...models import LeaderboardEntry, PlayerBase, PlayerNameExists
-from .db import REDIS
 
 
 class Player(PlayerBase, HashModel, index=True):
@@ -15,10 +14,6 @@ class Player(PlayerBase, HashModel, index=True):
 
     NAME_SET: ClassVar[str] = "player:name"
     LOCK_KEY: ClassVar[str] = "player:lock:{id}"
-
-    @classmethod
-    def db(cls):
-        return REDIS.get()
 
     @classmethod
     def rehydrate(cls, pk: str, doc: dict):

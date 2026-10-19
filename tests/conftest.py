@@ -6,7 +6,7 @@ from redis import Redis as RedisSync
 from redis.asyncio import BlockingConnectionPool, Redis
 from taskiq.api import run_receiver_task
 
-from battle_engine.backend.redis.db import REDIS, make_blocking_pool
+from battle_engine.backend.redis.db import make_blocking_pool
 from battle_engine.backend.redis.impl import RedisBackend
 from battle_engine.backend.redis.settings import settings as redis_settings
 from battle_engine.backend.shared import Backend
@@ -42,12 +42,12 @@ async def redis_pool(redis_service: str):
 async def redis(redis_pool: BlockingConnectionPool):
     async with Redis(connection_pool=redis_pool) as r:
         await r.flushdb()
-        with REDIS.set(r):
-            yield r
+        yield r
 
 
 @pytest.fixture
-async def client(redis: Redis):
+async def client(redis):
+    """We need redis dependency to call flushdb."""
     backend = RedisBackend()
     assert isinstance(backend, Backend), "backend supports Backend protocol"
 
@@ -55,12 +55,16 @@ async def client(redis: Redis):
         yield backend
 
     app.dependency_overrides[get_backend] = backend_override
-    async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=app),
-        headers={
-            redis_settings.API_KEY_HEADER: redis_settings.API_KEY_SECRET,
-        },
-    ) as client:
+
+    async with (
+        backend.lifespan(app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            headers={
+                redis_settings.API_KEY_HEADER: redis_settings.API_KEY_SECRET,
+            },
+        ) as client,
+    ):
         yield client
 
     app.dependency_overrides.clear()

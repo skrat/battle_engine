@@ -1,10 +1,6 @@
-from contextvars import ContextVar
-
-from redis.asyncio import BlockingConnectionPool, Redis
+from redis.asyncio import BlockingConnectionPool
 
 from .settings import settings
-
-REDIS: ContextVar[Redis] = ContextVar("REDIS")
 
 
 def make_blocking_pool():

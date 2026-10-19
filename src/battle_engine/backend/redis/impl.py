@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError
 
 from ...logic import process_battle
 from ...models import (
@@ -18,7 +19,7 @@ from ...models import (
     PlayerBase,
     PlayerFull,
 )
-from .db import REDIS, make_blocking_pool
+from .db import make_blocking_pool
 from .models import Leaderboard, Player
 from .settings import settings
 
@@ -82,20 +83,36 @@ script_acquire_players = _encoder.register_script(SCRIPT_ACQUIRE_PLAYERS_SRC)
 script_commit = _encoder.register_script(SCRIPT_COMMIT_SRC)
 
 
+async def health_check(redis: Redis, max_attempts=5, interval=0.1):
+    attempts = 0
+    last_exc = None
+    while attempts < max_attempts:
+        try:
+            if await redis.ping():
+                return
+        except ConnectionError as e:
+            last_exc = e
+        attempts += 1
+    raise RuntimeError(f"Failed to connect to {settings.REDIS_URL}") from last_exc
+
+
 class RedisBackend:
+    def __init__(self) -> None:
+        self.pool = make_blocking_pool()
+        self.client = Redis(
+            connection_pool=self.pool,
+            decode_responses=True,
+        )
+
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
-        # Init Redis pool and client
-        app.state.redis_pool = make_blocking_pool()
-        app.state.redis = Redis(connection_pool=app.state.redis_pool)
-        with REDIS.set(app.state.redis):
-            yield
-        # Deinit Redis
-        await app.state.redis_pool.disconnect()
+        await health_check(self.client)
+        yield
+        await self.pool.disconnect()
 
     async def create_player(self, p: PlayerBase) -> PlayerFull:
         clean = Player.model_validate(p)
-        await clean.create(REDIS.get())
+        await clean.create(self.client)
         assert isinstance(clean.pk, str)
         return PlayerFull(
             id=clean.pk,
@@ -128,7 +145,7 @@ class RedisBackend:
                     Player.make_primary_key(p2_id),
                 ],
                 args=[lock_token, settings.BATTLE_LOCK_TTL],
-                client=REDIS.get(),
+                client=self.client,
             )
             if isinstance(res, int):
                 if res == 0:
@@ -185,7 +202,7 @@ class RedisBackend:
                     *p1_args,
                     *p2_args,
                 ],
-                client=REDIS.get(),
+                client=self.client,
             )
 
         log.debug(f"Players {p1.pk}, {p2.pk} released")
@@ -197,4 +214,4 @@ class RedisBackend:
         )
 
     async def leaderboard(self, limit: int = 100) -> list[LeaderboardEntry]:
-        return await Leaderboard.ranked(REDIS.get())
+        return await Leaderboard.ranked(self.client)
