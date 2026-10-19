@@ -77,6 +77,13 @@ async def test_create_battle(client: AsyncClient):
     assert data["winner"]["name"] == p1.name
 
 
+async def test_self_battle_check(client: AsyncClient):
+    counter = cnt()
+    p1 = await make_player(client, next(counter), {})
+    resp = await client.post(f"/battle/{p1.id}/{p1.id}")
+    assert resp.status_code == 422
+
+
 async def test_battle_lock_stat_present(client: AsyncClient):
     counter = cnt()
     p1 = await make_player(client, next(counter), {})

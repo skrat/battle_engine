@@ -71,23 +71,7 @@ async def create_player(
         raise RequestValidationError(ex.errors())
 
 
-@app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
-async def request_battle(
-    *, _: Protected, backend: BackendDep, initiator_id: str, opponent_id: str
-):
-    """Submit battle endpoint. Battles are processed inside the request handler to
-    ensure immediate processing. This also satisfies spec. conditions:
-    - Handle battles in the order they are submitted.
-    """
-    if initiator_id == opponent_id:
-        raise RequestValidationError(["self-battle not allowed"])
-
-    req = BattleRequest(
-        initiator_id=initiator_id,
-        opponent_id=opponent_id,
-    )
-    result = await backend.resolve_battle(req)
-
+def battle_result_response(result: BattleResultStats) -> JSONResponse:
     return JSONResponse(
         result.result.model_dump(),
         headers=settings.STAT_HEADER_FLAG
@@ -98,11 +82,43 @@ async def request_battle(
     )
 
 
-@app.post("/battle_defer/{initiator_id}/{opponent_id}", response_model=BattleResult)
-async def request_battle_defer(*, _: Protected, initiator_id: str, opponent_id: str):
-    """Same as /battle but uses taskiq and a Redis broker."""
+def self_battle_check(initiator_id: str, opponent_id: str):
     if initiator_id == opponent_id:
         raise RequestValidationError(["self-battle not allowed"])
+
+
+@app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
+async def request_battle(
+    *,
+    _: Protected,
+    backend: BackendDep,
+    initiator_id: str,
+    opponent_id: str,
+    _check: None = Depends(self_battle_check),
+):
+    """Submit battle endpoint. Battles are processed inside the request handler to
+    ensure immediate processing. This also satisfies spec. conditions:
+    - Handle battles in the order they are submitted.
+    """
+
+    req = BattleRequest(
+        initiator_id=initiator_id,
+        opponent_id=opponent_id,
+    )
+    return battle_result_response(
+        await backend.resolve_battle(req),
+    )
+
+
+@app.post("/battle_defer/{initiator_id}/{opponent_id}", response_model=BattleResult)
+async def request_battle_defer(
+    *,
+    _: Protected,
+    initiator_id: str,
+    opponent_id: str,
+    _check: None = Depends(self_battle_check),
+):
+    """Same as /battle but uses taskiq and a Redis broker."""
 
     task: AsyncTaskiqTask = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
         initiator_id,
@@ -114,15 +130,8 @@ async def request_battle_defer(*, _: Protected, initiator_id: str, opponent_id: 
     if task_result.error is not None:
         raise task_result.error
 
-    result = BattleResultStats(**task_result.return_value)
-
-    return JSONResponse(
-        result.result.model_dump(),
-        headers=settings.STAT_HEADER_FLAG
-        and {
-            settings.STAT_HEADER: str(result.num_lock_attempts),
-        }
-        or {},
+    return battle_result_response(
+        BattleResultStats(**task_result.return_value),
     )
 
 
