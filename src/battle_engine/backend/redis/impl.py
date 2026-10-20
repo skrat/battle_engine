@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
@@ -105,7 +105,7 @@ class RedisBackend:
         )
 
     @asynccontextmanager
-    async def lifespan(self, app: FastAPI):
+    async def lifespan(self):
         await health_check(self.client)
         yield
         await self.pool.disconnect()

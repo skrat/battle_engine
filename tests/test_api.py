@@ -174,11 +174,5 @@ async def test_security(client: AsyncClient):
     client.headers = h
 
 
-def wait_for_string(stream: IO[Any], pattern: str):
-    for line in iter(stream.readline, b""):
-        if pattern in line:
-            break
-
-
-async def test_defer(client, worker):
-    await test_leaderboard(client, "/battle_defer")
+async def test_defer(worker_client: AsyncClient):
+    await test_leaderboard(worker_client, "/battle_defer")

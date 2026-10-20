@@ -4,13 +4,24 @@ import httpx2
 import pytest
 from redis import Redis as RedisSync
 from redis.asyncio import BlockingConnectionPool, Redis
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlmodel.ext.asyncio.session import AsyncSession
 from taskiq.api import run_receiver_task
 
 from battle_engine.backend.redis.db import make_blocking_pool
 from battle_engine.backend.redis.impl import RedisBackend
 from battle_engine.backend.redis.settings import settings as redis_settings
 from battle_engine.backend.shared import Backend
+from battle_engine.backend.sqlalchemy.db import (
+    create_engine,
+    drop_models,
+    init_models,
+    sessionmaker,
+)
+from battle_engine.backend.sqlalchemy.impl import SQLBackend
+from battle_engine.backend.sqlalchemy.settings import settings as sql_settings
 from battle_engine.main import app, get_backend
+from battle_engine.settings import settings
 from battle_engine.tasks import broker
 
 
@@ -46,9 +57,45 @@ async def redis(redis_pool: BlockingConnectionPool):
 
 
 @pytest.fixture
-async def client(redis):
-    """We need redis dependency to call flushdb."""
-    backend = RedisBackend()
+async def sql_engine():
+    sql_settings.DB_URL = "sqlite+aiosqlite:///test.sqlite3"
+    engine = create_engine()
+    await init_models(engine)
+    yield engine
+    await drop_models(engine)
+    await engine.dispose()
+
+
+@pytest.fixture
+def sql_sessionmaker(sql_engine: AsyncEngine):
+    return sessionmaker(sql_engine)
+
+
+@pytest.fixture
+async def sql_session(sql_sessionmaker: async_sessionmaker[AsyncSession]):
+    async with sql_sessionmaker() as sess:
+        yield sess
+
+
+@pytest.fixture
+def backend_redis(redis):
+    settings.BACKEND = "battle_engine.backend.redis.impl:RedisBackend"
+    return RedisBackend()
+
+
+@pytest.fixture
+def backend_sql(sql_engine):
+    settings.BACKEND = "battle_engine.backend.sqlalchemy.impl:SQLBackend"
+    return SQLBackend()
+
+
+@pytest.fixture(params=["backend_redis", "backend_sql"])
+def backend(request):
+    yield request.getfixturevalue(request.param)
+
+
+@pytest.fixture
+async def client(backend):
     assert isinstance(backend, Backend), "backend supports Backend protocol"
 
     async def backend_override():
@@ -57,7 +104,7 @@ async def client(redis):
     app.dependency_overrides[get_backend] = backend_override
 
     async with (
-        backend.lifespan(app),
+        backend.lifespan(),
         httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=app),
             headers={
@@ -71,11 +118,13 @@ async def client(redis):
 
 
 @pytest.fixture
-async def worker():
+async def worker_client(client: httpx2.AsyncClient):
     broker.is_worker_process = True
     await broker.startup()
     worker_task = asyncio.create_task(run_receiver_task(broker))
-    yield
+
+    yield client
+
     worker_task.cancel()
     try:
         await worker_task

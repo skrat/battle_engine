@@ -3,8 +3,6 @@ from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from fastapi import FastAPI
-
 from ..models import (
     BattleRequest,
     BattleResultStats,
@@ -24,7 +22,7 @@ PlayerModel_co = TypeVar(
 @runtime_checkable
 class Backend(Protocol, Generic[PlayerModel_co]):
     @asynccontextmanager
-    async def lifespan(self, app: FastAPI):
+    async def lifespan(self):
         """FastAPI lifespan hook."""
         yield
 

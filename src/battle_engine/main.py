@@ -32,7 +32,7 @@ async def app_lifespan(app: FastAPI):
     if settings.WITH_TASKIQ and not broker.is_worker_process:
         await broker.startup()
 
-    async with app.state.backend.lifespan(app):
+    async with app.state.backend.lifespan():
         yield
 
     # Deinit taskiq
