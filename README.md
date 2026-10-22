@@ -1,17 +1,19 @@
 # Backend service for a battle engine
 
+This was a home assignment from one my potential employers. I pushed it a little further and developed a demo backend, with multiple options persistence and concurrency
+
 ### Requirements
 
  - Python 3.14 (could work with lower version, not tested)
  - uv for dependency management ([installation](https://docs.astral.sh/uv/#installation))
- - Redis
+ - Redis, SQLite or PostgreSQL
 
 ### Running
 
 Launch Redis, eg.:
 
 ```sh
-docker run -p 6379:6379 redis:8
+docker-compose up
 ```
 
 Inside project directory, install dependencies with:
@@ -32,6 +34,14 @@ Run the development server:
 uv run fastapi dev
 ```
 
+### Multiple backends
+
+Using `env BACKEND=?` with either: 
+ - `battle_engine.backend.redis.impl:RedisBackend` or 
+ - `battle_engine.backend.sql.impl:SQLBackend`
+
+ you can set the persistence/locking backend. See `.env` for how to configure each.
+
 ### API documentation
 
 After launching the server you can visit the OpenAPI documentation 
@@ -46,7 +56,7 @@ The stack this is built with consists of:
  - Pydantic for request schema validation
 
  Optionally, there is a backend that processes battles in a separate, scalable worker process
- based on Taskiq and Redis. More on that later.
+ based on Taskiq and Redis. More on that later. (`env WITH_TASKIQ=1`)
 
  The key decision here is to process the battles in the HTTP request handler immediately
  upon arrival. Thus the FIFO requirement, processing battles as they come, is satisfied.

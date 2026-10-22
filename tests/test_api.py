@@ -1,6 +1,5 @@
 import asyncio
 import random
-from typing import IO, Any
 
 from httpx2 import AsyncClient, Response
 
@@ -174,5 +173,7 @@ async def test_security(client: AsyncClient):
     client.headers = h
 
 
-async def test_defer(worker_client: AsyncClient):
-    await test_leaderboard(worker_client, "/battle_defer")
+if settings.WITH_TASKIQ:
+
+    async def test_defer(worker_client: AsyncClient):
+        await test_leaderboard(worker_client, "/battle_defer")

@@ -110,29 +110,31 @@ async def request_battle(
     )
 
 
-@app.post("/battle_defer/{initiator_id}/{opponent_id}", response_model=BattleResult)
-async def request_battle_defer(
-    *,
-    _: Protected,
-    initiator_id: str,
-    opponent_id: str,
-    _check: None = Depends(self_battle_check),
-):
-    """Same as /battle but uses taskiq and a Redis broker."""
+if settings.WITH_TASKIQ:
 
-    task: AsyncTaskiqTask = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
-        initiator_id,
-        opponent_id,
-    )
-    task_result = await task.wait_result(
-        timeout=5,
-    )
-    if task_result.error is not None:
-        raise task_result.error
+    @app.post("/battle_defer/{initiator_id}/{opponent_id}", response_model=BattleResult)
+    async def request_battle_defer(
+        *,
+        _: Protected,
+        initiator_id: str,
+        opponent_id: str,
+        _check: None = Depends(self_battle_check),
+    ):
+        """Same as /battle but uses taskiq and a Redis broker."""
 
-    return battle_result_response(
-        BattleResultStats(**task_result.return_value),
-    )
+        task: AsyncTaskiqTask = await process_battle_task.kiq(  # pyright: ignore[reportCallIssue]
+            initiator_id,
+            opponent_id,
+        )
+        task_result = await task.wait_result(
+            timeout=5,
+        )
+        if task_result.error is not None:
+            raise task_result.error
+
+        return battle_result_response(
+            BattleResultStats(**task_result.return_value),
+        )
 
 
 @app.get("/leaderboard")
