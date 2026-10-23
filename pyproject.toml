@@ -15,6 +15,9 @@ dependencies = [
     "redis[hiredis]>=8.1.0",
     "taskiq>=0.13.0",
     "taskiq-redis>=1.2.4",
+    "aiosqlite>=0.22.1",
+    "sqlalchemy[asyncio]>=2.1.5",
+    "sqlmodel>=0.0.48",
 ]
 
 [project.scripts]
@@ -34,11 +37,6 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-docker>=3.2.6",
-]
-sql = [
-    "aiosqlite>=0.22.1",
-    "sqlalchemy[asyncio]>=2.1.5",
-    "sqlmodel>=0.0.48",
 ]
 
 [tool.ruff.lint.flake8-bugbear]

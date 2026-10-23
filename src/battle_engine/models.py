@@ -1,7 +1,8 @@
-from typing import Annotated, Generic, Literal, TypeVar
+from enum import IntEnum
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from annotated_types import Ge, Le
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, StringConstraints, model_validator
 
 IDType = TypeVar("IDType", int, str)
 
@@ -23,6 +24,9 @@ class PlayerBase(BaseModel):
     hit_points: Annotated[int, Ge(0)] = 100
 
 
+P = TypeVar("P", bound=PlayerBase)
+
+
 class PlayerFull(PlayerBase, Generic[IDType]):
     """Player with persistent ID."""
 
@@ -35,6 +39,13 @@ class BattleRequest(BaseModel, Generic[IDType]):
     initiator_id: IDType
     opponent_id: IDType
 
+    @model_validator(mode="before")
+    @classmethod
+    def check_self_battle(cls, data: Any) -> Any:
+        if str(data["initiator_id"]) == str(data["opponent_id"]):
+            raise ValueError("self-battle now allowed")
+        return data
+
 
 class BattleRequestReady(BattleRequest):
     """For submission to battle engine. Filled with player data."""
@@ -43,7 +54,40 @@ class BattleRequestReady(BattleRequest):
     opponent: PlayerBase
 
 
-class BattleResultRegular[P](BaseModel):
+class BattleTurnResult(IntEnum):
+    HIT = 1
+    MISS = 2
+
+
+class BattleTurnHit(BaseModel, Generic[P]):
+    """One turn in the battle."""
+
+    type: Literal[BattleTurnResult.HIT] = BattleTurnResult.HIT
+    attacking_player: P
+    defending_player: P
+    damange: int
+
+    def __str__(self) -> str:
+        return f" ! {self.attacking_player} hit {self.defending_player.name} with {self.damange} damange!"
+
+
+class BattleTurnMiss(BaseModel, Generic[P]):
+    """One turn in the battle."""
+
+    type: Literal[BattleTurnResult.MISS] = BattleTurnResult.MISS
+    attacking_player: P
+    defending_player: P
+
+    def __str__(self) -> str:
+        return f" % {self.attacking_player.name} missed."
+
+
+type BattleTurn = BattleTurnHit | BattleTurnMiss
+
+type BattleReport = list[BattleTurn]
+
+
+class BattleResultRegular(BaseModel, Generic[P]):
     """Battle engine output model."""
 
     type: Literal["regular"] = "regular"
@@ -51,16 +95,16 @@ class BattleResultRegular[P](BaseModel):
     opponent: P
     winner: P
     stolen: tuple[int, int]
-    report: list[str]
+    report: BattleReport
 
 
-class BattleResultTie[P](BaseModel):
+class BattleResultTie(BaseModel, Generic[P]):
     """Battle engine output model."""
 
     type: Literal["tie"] = "tie"
     initiator: P
     opponent: P
-    report: list[str]
+    report: BattleReport
 
 
 type BattleResult = BattleResultRegular | BattleResultTie

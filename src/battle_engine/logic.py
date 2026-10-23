@@ -6,6 +6,9 @@ from .models import (
     BattleResult,
     BattleResultRegular,
     BattleResultTie,
+    BattleTurn,
+    BattleTurnHit,
+    BattleTurnMiss,
     PlayerBase,
 )
 
@@ -26,9 +29,7 @@ def process_battle(req: BattleRequestReady, max_turns=20) -> BattleResult:
     :param max_turns: used to prevent infinite battles, default is 20
     :type max_turns: int, optional
     """
-    report = [
-        f"= Player {pstat(req.initiator)} initiated battle against player {pstat(req.opponent)}"
-    ]
+    report: list[BattleTurn] = []
     p1 = req.initiator
     p2 = req.opponent
     # Keep track of initial attack value
@@ -40,14 +41,12 @@ def process_battle(req: BattleRequestReady, max_turns=20) -> BattleResult:
         if steps >= max_turns:
             # It's a tie when players' defense is too high
             # undefined behavior
-            report.append(" ! max steps reached")
             return BattleResultTie(
                 initiator=req.initiator,
                 opponent=req.opponent,
                 report=report,
             )
         steps += 1
-        report.append(f" ~ {pstat(p1)} is attacking {pstat(p2)}")
         if p2.defense < p1.attack:
             damage = p1.attack
             new_hit_points = max(0, p2.hit_points - damage)
@@ -58,10 +57,19 @@ def process_battle(req: BattleRequestReady, max_turns=20) -> BattleResult:
             # Attack will never drop below 50% of the base value.
             p2.attack = int(max(p2_min, p2.attack * lost_health))
             report.append(
-                f" > {p1.name} hit {p2.name} with d:{damage}, {p2.name}'s ❤️ {p2.hit_points}"
+                BattleTurnHit(
+                    attacking_player=p1,
+                    defending_player=p2,
+                    damange=damage,
+                )
             )
         else:
-            report.append(f" < {p1.name} missed")
+            report.append(
+                BattleTurnMiss(
+                    attacking_player=p1,
+                    defending_player=p2,
+                )
+            )
         # Roles switch after each turn.
         x = p1
         x_min = p1_min
@@ -82,9 +90,6 @@ def process_battle(req: BattleRequestReady, max_turns=20) -> BattleResult:
     loser.silver = max(0, loser.silver - loot_silver)
     winner.gold = winner.gold + loot_gold
     winner.silver = winner.silver + loot_silver
-
-    report.append(f" @ {ploot(winner)} is victorious!")
-    report.append(f" @ {winner.name} stole gold:{loot_gold} and silver:{loot_silver} !")
 
     return BattleResultRegular(
         initiator=req.initiator,

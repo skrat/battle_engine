@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from taskiq import AsyncTaskiqTask
@@ -58,17 +58,37 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=jsonable_encoder({"detail": exc.errors()}),
+    )
+
+
+@app.exception_handler(PlayerNameExists)
+async def player_name_exception_handler(request: Request, exc: PlayerNameExists):
+    return JSONResponse(
+        status_code=422,
+        content=jsonable_encoder(
+            {
+                "detail": [
+                    {
+                        "loc": ["body", "name"],
+                        "msg": "player name exists",
+                    }
+                ]
+            }
+        ),
+    )
+
+
 @app.post("/player", response_model=PlayerFull)
 async def create_player(
     *, _: Protected, backend: BackendDep, player: PlayerBase
 ) -> PlayerFull:
     """Create player endpoint."""
-    try:
-        return await backend.create_player(player)
-    except PlayerNameExists:
-        raise RequestValidationError(["name"])
-    except ValidationError as ex:
-        raise RequestValidationError(ex.errors())
+    return await backend.create_player(player)
 
 
 def battle_result_response(result: BattleResultStats) -> JSONResponse:
@@ -82,11 +102,6 @@ def battle_result_response(result: BattleResultStats) -> JSONResponse:
     )
 
 
-def self_battle_check(initiator_id: str, opponent_id: str):
-    if initiator_id == opponent_id:
-        raise RequestValidationError(["self-battle not allowed"])
-
-
 @app.post("/battle/{initiator_id}/{opponent_id}", response_model=BattleResult)
 async def request_battle(
     *,
@@ -94,7 +109,6 @@ async def request_battle(
     backend: BackendDep,
     initiator_id: str,
     opponent_id: str,
-    _check: None = Depends(self_battle_check),
 ):
     """Submit battle endpoint. Battles are processed inside the request handler to
     ensure immediate processing. This also satisfies spec. conditions:
@@ -118,7 +132,6 @@ if settings.WITH_TASKIQ:
         _: Protected,
         initiator_id: str,
         opponent_id: str,
-        _check: None = Depends(self_battle_check),
     ):
         """Same as /battle but uses taskiq and a Redis broker."""
 
@@ -153,3 +166,7 @@ def start():
         port=8000,
         reload=True,
     )
+
+
+if __name__ == "__main__":
+    start()

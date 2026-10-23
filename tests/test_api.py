@@ -22,7 +22,7 @@ async def test_create_player_fails_unique(client: AsyncClient):
     resp2 = await client.post("/player", json={"name": "one"})
     assert resp1.status_code == 200
     assert resp2.status_code == 422
-    assert resp2.json() == {"detail": ["name"]}
+    assert resp2.json()["detail"][0]["loc"] == ["body", "name"]
 
     resps = await asyncio.gather(
         client.post("/player", json={"name": "two"}),
