@@ -86,7 +86,7 @@ def backend_redis(redis):
 @pytest.fixture
 def backend_sql(sql_engine):
     settings.BACKEND = "battle_engine.backend.sqlalchemy.impl:SQLBackend"
-    return SQLBackend()
+    return SQLBackend(engine=sql_engine)
 
 
 @pytest.fixture(params=["backend_redis", "backend_sql"])

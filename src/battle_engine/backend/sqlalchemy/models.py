@@ -14,6 +14,7 @@ from sqlmodel import (
     SQLModel,
     UniqueConstraint,
     desc,
+    insert,
     select,
 )
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -48,11 +49,14 @@ class Player(PlayerBase, SQLModel, table=True):
     async def create(cls, sess: AsyncSession, p: PlayerBase) -> PlayerFull:
         try:
             clean = Player.model_validate(p)
-            sess.add(clean)
+            result: Player = (
+                await sess.exec(
+                    insert(Player).values(**clean.model_dump()).returning(Player)
+                )
+            ).one()[0]
             await sess.commit()
-            await sess.refresh(clean)
             return PlayerFull(
-                id=str(clean.id),
+                id=str(result.id),
                 **clean.model_dump(exclude={"id"}),
             )
         except IntegrityError as e:
@@ -76,7 +80,7 @@ class Leaderboard(SQLModel, table=True):
         return (await sess.exec(stmt)).all()
 
     @classmethod
-    async def update(cls, sess: AsyncSession, pid: int, score: int):
+    async def update(cls, sess: AsyncSession, pid: int, score: int, commit=True):
         """UPSERT operation to insert, or add to an existing leaderboard entry."""
         ins_stmt = upsert(Leaderboard).values(player_id=pid, score=score)
         ups_stmt = ins_stmt.on_conflict_do_update(
@@ -84,4 +88,5 @@ class Leaderboard(SQLModel, table=True):
             set_={"score": Leaderboard.score + score},
         ).returning(Leaderboard)
         await sess.exec(ups_stmt)
-        await sess.commit()
+        if commit:
+            await sess.commit()

@@ -68,7 +68,7 @@ class BattleTurnHit(BaseModel, Generic[P]):
     damange: int
 
     def __str__(self) -> str:
-        return f" ! {self.attacking_player} hit {self.defending_player.name} with {self.damange} damange!"
+        return f" ! {self.attacking_player.name} hit {self.defending_player.name} with {self.damange} damange!"
 
 
 class BattleTurnMiss(BaseModel, Generic[P]):

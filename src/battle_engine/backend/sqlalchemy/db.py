@@ -31,6 +31,8 @@ async def init_models(engine: AsyncEngine):
     async with engine.begin() as conn:
         if engine.url.drivername.startswith("sqlite"):
             await conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.commit()
 

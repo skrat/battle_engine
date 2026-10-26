@@ -7,10 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from taskiq import AsyncTaskiqTask
 
-from battle_engine.backend.shared import Backend, get_backend_impl
-from battle_engine.settings import settings
-from battle_engine.tasks import broker, process_battle_task
-
+from .backend.shared import Backend, get_backend_impl
 from .models import (
     BattleRequest,
     BattleResult,
@@ -21,6 +18,8 @@ from .models import (
     PlayerNameExists,
 )
 from .security import Protected
+from .settings import settings
+from .tasks import broker, process_battle_task
 
 
 @asynccontextmanager

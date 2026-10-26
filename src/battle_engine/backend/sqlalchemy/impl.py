@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import cast
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -28,8 +29,8 @@ log = logging.getLogger(__name__)
 
 
 class SQLBackend:
-    def __init__(self) -> None:
-        self.engine = create_engine()
+    def __init__(self, engine: AsyncEngine | None = None) -> None:
+        self.engine = engine or create_engine()
         self.sessionmaker = sessionmaker(self.engine)
 
     @asynccontextmanager
@@ -62,8 +63,6 @@ class SQLBackend:
         async with self.sessionmaker() as sess:
             # Ensure players exist
             await self._ensure_exist(sess, (p1_id, p2_id))
-            # Ensure no transaction
-            await sess.commit()
 
             lock_attempts = 0
             while p1 is None or p2 is None:
@@ -109,8 +108,8 @@ class SQLBackend:
             result: BattleResult | None = None
             try:
                 req_ready = BattleRequestReady(
-                    initiator=p1,
-                    opponent=p2,
+                    initiator=PlayerFull(**p1.model_dump()),
+                    opponent=PlayerFull(**p2.model_dump()),
                     **req.model_dump(),
                 )
                 result = process_battle(req_ready)
@@ -119,16 +118,15 @@ class SQLBackend:
                     await _wait_for
             finally:
                 # Release the players' locks, so they'll become available for future battles
-                await sess.commit()
                 async with sess.begin():
-                    await sess.exec(
-                        update(Player)
-                        .where(Player.id.in_([p1_id, p2_id]))  # pyright: ignore
-                        .values(battle_lock=False)
-                    )
+                    p1.battle_lock = False
+                    p2.battle_lock = False
                     if result and isinstance(result, BattleResultRegular):
-                        winner_id = p1_id if p1 == result.winner else p2_id
-                        await Leaderboard.update(sess, winner_id, sum(result.stolen))
+                        p1.sqlmodel_update(result.initiator)
+                        p2.sqlmodel_update(result.opponent)
+                        await Leaderboard.update(
+                            sess, result.winner.id, sum(result.stolen), commit=False
+                        )
                 log.debug(f"Players {p1.id}, {p2.id} released")
 
             assert result
@@ -150,15 +148,11 @@ class SQLBackend:
             ]
 
     async def _ensure_exist(self, sess: AsyncSession, ids: tuple[int, int]):
-        found = set(
-            (
-                await sess.exec(
-                    select(cast(int, Player.id)).where(
-                        Player.id.in_(ids)  # pyright: ignore
-                    )
-                )
-            ).all()
+        stmt = select(cast(int, Player.id)).where(
+            Player.id.in_(ids)  # pyright: ignore
         )
+        found = set((await sess.exec(stmt)).all())
+        await sess.commit()
         if len(found) != 2:
             missing = set(ids) - found
             raise HTTPException(404, [f"player {missing.pop()} not found"])
